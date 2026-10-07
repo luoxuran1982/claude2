@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuantLab 量化学习实验室</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside id="side">
+  <div class="brand"><img src="icon.svg" alt=""><div><b>QuantLab</b><small>量化学习实验室</small></div></div>
+  <nav>
+    <a data-page="data" class="on">📂 数据中心</a>
+    <a data-page="factors">🧪 因子研究</a>
+    <a data-page="new">⚙️ 新建实验</a>
+    <a data-page="results">📈 实验结果</a>
+    <a data-page="compare">⚖️ 实验对比</a>
+    <a data-page="picks">🎯 最新选股</a>
+    <a data-page="help">❓ 使用说明</a>
+  </nav>
+  <div class="side-foot">
+    <div id="ds-current" class="muted"></div>
+    <button class="link" id="open-data-dir">打开数据目录</button>
+    <div id="version" class="muted"></div>
+  </div>
+</aside>
+<main>
+  <div id="jobbar" hidden>
+    <div class="job-title"><span id="job-title"></span> <span id="job-msg" class="muted"></span></div>
+    <div class="bar"><i id="job-bar"></i></div>
+    <span id="job-pct"></span>
+    <button id="job-logs-btn" class="ghost sm">日志</button>
+    <button id="job-cancel" class="ghost sm">取消</button>
+  </div>
+  <pre id="job-logs" hidden></pre>
+
+  <!-- 数据中心 -->
+  <section id="page-data" class="page on">
+    <h1>数据中心</h1>
+    <div class="grid2">
+      <div class="card">
+        <h2>导入本地 K 线</h2>
+        <p class="muted">支持通达信 <code>vipdoc</code> 目录（.day）、通达信导出 txt、CSV/Excel（中英文列名自动识别）、Tushare 日线、Parquet。选整个文件夹即可，子文件夹会一起扫描。</p>
+        <label>文件夹或文件路径
+          <div class="row"><input id="imp-path" placeholder="例如 D:\new_tdx\vipdoc 或 D:\kline\daily"><button id="imp-pick" class="ghost">选择文件夹…</button></div>
+        </label>
+        <div class="row">
+          <label class="grow">数据集名称<input id="imp-title" placeholder="例如 通达信全市场"></label>
+          <label class="grow">合并到已有数据集（增量更新）<select id="imp-merge"><option value="">不合并，新建数据集</option></select></label>
+        </div>
+        <div class="row checks">
+          <label><input type="checkbox" id="imp-index" checked> 同时导入指数（作基准）</label>
+          <label><input type="checkbox" id="imp-fund"> 导入基金/ETF</label>
+          <label title="不复权数据用涨跌停规则识别除权跳空并估算复权因子"><input type="checkbox" id="imp-adjust" checked> 不复权数据自动除权估算</label>
+        </div>
+        <button id="imp-go" class="primary">开始导入</button>
+      </div>
+      <div class="card">
+        <h2>没有数据？先用演示数据跑通</h2>
+        <p class="muted">生成“模拟 A 股”日线：含涨跌停、停牌、送转除权、退市，并埋了几个弱规律（短期反转等）。<b>不是真实行情</b>，只用来熟悉流程和验证系统。</p>
+        <div class="row">
+          <label class="grow">股票数<input id="demo-n" type="number" value="300" min="20" max="3000"></label>
+          <label class="grow">年数<input id="demo-years" type="number" value="8" min="2" max="20"></label>
+        </div>
+        <button id="demo-go">生成演示数据</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>数据集</h2>
+      <table class="tbl" id="ds-table"><thead><tr><th>名称</th><th>编号</th><th>证券数</th><th>区间</th><th>行数</th><th>除权事件</th><th>提示</th><th></th></tr></thead><tbody></tbody></table>
+      <div id="ds-empty" class="empty" hidden>还没有数据集。导入本地 K 线，或者生成演示数据。</div>
+    </div>
+    <div class="card" id="ds-detail" hidden>
+      <div class="row between"><h2 id="ds-detail-title"></h2><div id="ds-boards" class="chips"></div></div>
+      <div class="row">
+        <input id="sym-q" placeholder="搜索代码或名称，如 600519 / 茅台" class="grow">
+        <select id="kl-run"><option value="">叠加实验信号（可选）</option></select>
+      </div>
+      <div class="split">
+        <div id="sym-list" class="list"></div>
+        <div class="grow">
+          <div id="kl-head" class="kl-head"></div>
+          <div id="kline" class="chart tall"></div>
+        </div>
+      </div>
+      <details id="ds-issues"><summary>导入提示（单位换算、修正、读取失败等）</summary><ul></ul></details>
+    </div>
+  </section>
+
+  <!-- 因子研究 -->
+  <section id="page-factors" class="page">
+    <h1>因子研究 <small class="muted">单因子 RankIC 检验</small></h1>
+    <div class="card">
+      <p class="muted">逐个检验因子与未来收益的截面秩相关（RankIC）。|RankIC| &gt; 0.03 且胜率稳定的因子通常有用；负 IC 表示反向有效（例如短期反转）。树模型会自动组合它们。</p>
+      <div class="row">
+        <label>数据集<select id="fa-ds" class="ds-select"></select></label>
+        <label>预测周期（天）<input id="fa-h" type="number" value="5" min="1" max="60"></label>
+        <label>采样间隔（天）<input id="fa-step" type="number" value="5" min="1" max="60"></label>
+        <label>开始日期<input id="fa-start" type="date"></label>
+        <label>结束日期<input id="fa-end" type="date"></label>
+        <button id="fa-go" class="primary">开始检验</button>
+      </div>
+    </div>
+    <div class="card" id="fa-result" hidden>
+      <div id="fa-chart" class="chart"></div>
+      <table class="tbl sortable" id="fa-table"><thead><tr><th data-k="name">因子</th><th data-k="group">分组</th><th data-k="desc">说明</th><th data-k="rank_ic">RankIC</th><th data-k="icir">ICIR</th><th data-k="positive">IC&gt;0 占比</th><th data-k="spread">多空差</th><th data-k="coverage">覆盖率</th><th>IC 走势</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- 新建实验 -->
+  <section id="page-new" class="page">
+    <h1>新建实验</h1>
+    <div class="card presets">
+      <span class="muted">预设：</span>
+      <button data-preset="quick" class="ghost sm">快速试跑</button>
+      <button data-preset="default" class="ghost sm">默认（LightGBM）</button>
+      <button data-preset="lowturn" class="ghost sm">低换手（20日）</button>
+      <button data-preset="ensemble" class="ghost sm">集成（LGBM+岭回归+MLP）</button>
+      <button data-preset="rank" class="ghost sm">排序学习（LambdaRank）</button>
+      <span class="grow"></span>
+      <button id="cfg-export" class="ghost sm">复制配置 JSON</button>
+      <button id="cfg-import" class="ghost sm">粘贴配置 JSON</button>
+    </div>
+    <form id="cfg-form" class="cfg">
+      <div class="card">
+        <h2>① 基本</h2>
+        <div class="row">
+          <label class="grow">实验名称<input name="name" placeholder="留空自动命名"></label>
+          <label class="grow">数据集<select name="dataset" class="ds-select"></select></label>
+          <label>开始日期<input type="date" name="period.start"></label>
+          <label>结束日期<input type="date" name="period.end"></label>
+        </div>
+        <p class="hint">开始日期之前会自动多加载约 1.5 年数据给指标预热；回测从第一次滚动训练结束后开始。</p>
+      </div>
+      <div class="card">
+        <h2>② 股票池（掩码）</h2>
+        <div class="row checks" id="cfg-boards"></div>
+        <div class="row">
+          <label>上市满（交易日）<input type="number" name="universe.min_listed_days" min="0"></label>
+          <label>20日均成交额 ≥（万元）<input type="number" name="universe.min_amount_wan" min="0"></label>
+          <label>股价 ≥（元）<input type="number" step="0.1" name="universe.min_price" min="0"></label>
+          <label class="check"><input type="checkbox" name="universe.exclude_st"> 排除 ST（按名称）</label>
+        </div>
+        <p class="hint">每个决策日只在“当天有成交 + 上市够久 + 流动性够”的股票里选；次日一字涨停买不进、一字跌停卖不出、停牌不能交易。</p>
+      </div>
+      <div class="card">
+        <h2>③ 因子</h2>
+        <div class="row checks" id="cfg-groups"></div>
+        <div class="row">
+          <label>截面标准化<select name="features.normalize"><option value="rank">排名（推荐，抗极值）</option><option value="zscore">去极值 + Z 分数</option><option value="none">不处理</option></select></label>
+          <label class="grow">只用这些因子（可选，逗号分隔，填了就忽略上面的分组）<input name="features.names" placeholder="例如 ret_5, vol_20, ma_gap_20"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h2>④ 预测目标（标签）</h2>
+        <div class="row">
+          <label>预测周期（交易日）<input type="number" name="label.horizon" min="1" max="60"></label>
+          <label>收益口径<select name="label.price"><option value="open">次日开盘买 → N 日后开盘卖（与回测一致）</option><option value="close">当日收盘 → N 日后收盘</option></select></label>
+          <label>标签变换<select name="label.transform"><option value="rank">截面排名</option><option value="zscore">截面 Z 分数</option><option value="raw">原始收益</option></select></label>
+          <label class="check"><input type="checkbox" name="label.excess"> 减去当天股票池平均（超额收益）</label>
+        </div>
+      </div>
+      <div class="card">
+        <h2>⑤ 模型</h2>
+        <div class="row checks" id="cfg-models"></div>
+        <p class="hint">选多个模型 = 等权集成（每天把各模型的打分转成排名后取平均）。</p>
+        <details><summary>高级：模型参数（JSON，按模型名分组，留空用默认）</summary>
+          <textarea name="model.params" rows="6" placeholder='{"lgbm": {"num_leaves": 31, "learning_rate": 0.03}}'></textarea>
+        </details>
+      </div>
+      <div class="card">
+        <h2>⑥ 滚动训练（walk-forward）</h2>
+        <div class="row">
+          <label>训练窗口（交易日，0=全部历史）<input type="number" name="walk.train_days" min="0"></label>
+          <label>每隔多少交易日重训<input type="number" name="walk.retrain_days" min="1"></label>
+          <label>验证集比例（早停用）<input type="number" step="0.05" name="walk.valid_ratio" min="0" max="0.45"></label>
+          <label>最少训练天数<input type="number" name="walk.min_train_days" min="60"></label>
+          <label class="check"><input type="checkbox" name="walk.train_tradable_only"> 训练时去掉次日买不进的样本</label>
+        </div>
+        <p class="hint">训练集和测试集之间自动留出“预测周期 + 1 天”的隔离带，回测只用样本外预测，杜绝未来函数。</p>
+      </div>
+      <div class="card">
+        <h2>⑦ 回测</h2>
+        <div class="row">
+          <label>持仓只数<input type="number" name="backtest.top_k" min="1" max="500"></label>
+          <label>调仓周期（交易日）<input type="number" name="backtest.rebalance_days" min="1" max="120"></label>
+          <label>初始资金（元）<input type="number" name="backtest.capital" min="10000" step="10000"></label>
+          <label>基准<select name="backtest.benchmark" id="cfg-bench"></select></label>
+        </div>
+        <div class="row">
+          <label>佣金率<input type="number" step="0.00001" name="backtest.commission"></label>
+          <label>最低佣金（元）<input type="number" step="1" name="backtest.min_commission"></label>
+          <label>印花税（卖出）<input type="number" step="0.0001" name="backtest.stamp_tax"></label>
+          <label>滑点（单边）<input type="number" step="0.0005" name="backtest.slippage"></label>
+          <label>持仓缓冲倍数<input type="number" step="0.1" name="backtest.buffer" min="1"></label>
+          <label>止损（0=关闭）<input type="number" step="0.01" name="backtest.stop_loss" min="0"></label>
+        </div>
+        <p class="hint">决策日收盘出信号 → 次日开盘先卖后买、等权、100 股一手。持仓排名仍在前“持仓只数×缓冲倍数”内就不换，能明显降低换手和手续费。</p>
+      </div>
+      <div class="actions"><button type="submit" class="primary big">▶ 开始实验</button><span id="cfg-error" class="err"></span></div>
+    </form>
+  </section>
+
+  <!-- 实验结果 -->
+  <section id="page-results" class="page">
+    <h1>实验结果</h1>
+    <div class="split">
+      <div id="run-list" class="list runs"></div>
+      <div class="grow" id="run-detail">
+        <div class="empty">左侧选择一个实验。还没有实验？去“新建实验”。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 实验对比 -->
+  <section id="page-compare" class="page">
+    <h1>实验对比</h1>
+    <div class="card"><p class="muted">勾选 2~8 个实验对比净值和指标。</p><div id="cmp-list" class="checks wrap"></div></div>
+    <div class="card" id="cmp-result" hidden>
+      <div id="cmp-chart" class="chart tall"></div>
+      <table class="tbl" id="cmp-table"></table>
+    </div>
+  </section>
+
+  <!-- 最新选股 -->
+  <section id="page-picks" class="page">
+    <h1>最新选股 <small class="muted">用最近数据训练的最终模型给最后一个交易日打分</small></h1>
+    <div class="card">
+      <div class="row"><label class="grow">实验<select id="pk-run"></select></label><button id="pk-export" class="ghost">导出 CSV</button></div>
+      <p class="warn">模型输出仅供学习研究，不构成投资建议。真实交易前请确认数据已更新到最新交易日。</p>
+      <div id="pk-head" class="muted"></div>
+      <table class="tbl" id="pk-table"><thead><tr><th>排名</th><th>代码</th><th>名称</th><th>模型得分（0~1）</th><th>最新收盘</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- 帮助 -->
+  <section id="page-help" class="page">
+    <h1>使用说明</h1>
+    <div class="card prose">
+      <h2>四步上手</h2>
+      <ol>
+        <li><b>数据中心</b>：导入通达信 <code>vipdoc</code> 文件夹（或 CSV 文件夹），或先生成演示数据。</li>
+        <li><b>因子研究</b>（可选）：看看哪些因子在你的数据上有效。</li>
+        <li><b>新建实验</b>：选股票池、因子、模型、回测参数，点“开始实验”。全市场 10 年数据通常几分钟到十几分钟。</li>
+        <li><b>实验结果</b>：看净值、回撤、IC、分层收益、交易记录；<b>最新选股</b>看模型对最新一天的排序。</li>
+      </ol>
+      <h2>时间线（为什么没有未来函数）</h2>
+      <p>t 日收盘后用 t 日及以前的数据算因子、打分 → t+1 日开盘按打分买入 → 持有 N 天后开盘卖出。训练用滚动窗口，训练集最后一个样本的标签在测试开始前就已经实现（中间留隔离带），所以回测里的每一个预测都是“样本外”的。</p>
+      <h2>指标速查</h2>
+      <dl>
+        <dt>RankIC</dt><dd>每天模型打分与未来收益排名的相关系数，再取平均。A 股日频选股 0.03~0.08 算不错，超过 0.15 要怀疑数据有问题（比如未来函数或幸存者偏差）。</dd>
+        <dt>ICIR</dt><dd>IC 均值 / IC 标准差，衡量稳定性。</dd>
+        <dt>分层收益</dt><dd>每天按打分把股票分 5 组，第 5 组应该收益最高，单调性越好越可信。</dd>
+        <dt>夏普 / 卡玛</dt><dd>年化收益 / 年化波动；年化收益 / 最大回撤。</dd>
+        <dt>信息比率</dt><dd>相对基准的超额收益 / 跟踪误差。</dd>
+        <dt>年换手</dt><dd>一年的成交额是平均资产的几倍。换手越高手续费越多，可以调大调仓周期、持仓缓冲倍数。</dd>
+      </dl>
+      <h2>常见坑</h2>
+      <ul>
+        <li><b>幸存者偏差</b>：通达信本地目录往往没有已退市股票，回测会偏乐观。</li>
+        <li><b>复权</b>：通达信 .day 是不复权价格，系统用涨跌停规则识别送转除权跳空做近似复权；有准确复权因子（如 Tushare adj_factor 列）时优先使用。</li>
+        <li><b>ST 识别</b>只能依据当前名称，历史上曾经是 ST 的股票识别不到。</li>
+        <li>不要反复在同一段数据上调参后只看最好的结果——那是过拟合。用“结束日期”留一段最近的数据最后再验证。</li>
+      </ul>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<script src="vendor/echarts.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

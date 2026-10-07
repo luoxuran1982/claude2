@@ -30,6 +30,29 @@ def _groups(dates: np.ndarray) -> np.ndarray:
     return counts
 
 
+def rank_ic_metric(y_true_raw: np.ndarray, dates: np.ndarray):
+    """LightGBM 自定义验证指标：验证集每日 RankIC 的平均（越大越好）。样本须按日期排序。"""
+    bounds = np.r_[0, np.nonzero(np.diff(dates))[0] + 1, len(dates)]
+    slices = [(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b - a >= 10]
+
+    def ranks(x):
+        r = np.empty(len(x))
+        r[np.argsort(x, kind="stable")] = np.arange(len(x))
+        return r
+
+    y_ranks = [ranks(y_true_raw[a:b]) for a, b in slices]
+
+    def metric(_y, pred, *args):
+        ics = []
+        for (a, b), yr in zip(slices, y_ranks):
+            pr = ranks(np.asarray(pred[a:b]))
+            c = np.corrcoef(pr, yr)[0, 1]
+            if np.isfinite(c):
+                ics.append(c)
+        return "rank_ic", float(np.mean(ics)) if ics else 0.0, True
+    return metric
+
+
 class Base:
     kind = ""
     fill_nan = False
@@ -79,11 +102,13 @@ class LGBM(Base):
             kw["group"] = _groups(dates)
         has_val = Xv is not None and len(Xv) > 0
         if has_val:
+            # 早停看验证集 RankIC（选股真正关心的指标），而不是 L2 损失
             kw["eval_set"] = [(Xv, self._label(yv, dates_v))]
             if self.objective == "lambdarank":
                 kw["eval_group"] = [_groups(dates_v)]
-                kw["eval_at"] = [50]
-            kw["callbacks"] = [lgb.early_stopping(stop, verbose=False)]
+            kw["eval_metric"] = rank_ic_metric(np.asarray(yv, dtype="float64"), np.asarray(dates_v))
+            self.model.set_params(metric="None")
+            kw["callbacks"] = [lgb.early_stopping(stop, first_metric_only=True, verbose=False)]
         with warnings.catch_warnings():  # 不同 LightGBM 版本的 eval_set 弃用提示
             warnings.simplefilter("ignore")
             self.model.fit(X, self._label(y, dates), **kw)

@@ -1,0 +1,7 @@
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15          # 数据集存储（parquet）
+scikit-learn>=1.4    # 随机森林、岭回归、MLP 等模型
+lightgbm>=4.3        # 主力模型
+openpyxl>=3.1        # 读取 Excel 格式的 K 线
+pywebview>=5.0       # 独立窗口；装不上时自动改用浏览器打开
