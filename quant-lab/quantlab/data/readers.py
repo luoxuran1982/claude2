@@ -227,7 +227,8 @@ def read_text(path: Path, market_hint: str | None = None) -> list[Series]:
     header_idx = None
     for i in range(head, min(head + 5, len(lines))):
         cols = re.split(_sep(lines[i]), lines[i].strip())
-        if "date" in match_columns(cols) and not re.match(r"^\d", cols[0]):
+        mc = match_columns(cols)
+        if ("date" in mc or ("code" in mc and "name" in mc)) and not re.match(r"^\d", cols[0]):
             header_idx = i
             break
     body = lines[header_idx + 1 if header_idx is not None else head:]
@@ -254,6 +255,13 @@ def read_text(path: Path, market_hint: str | None = None) -> list[Series]:
 def frame_to_series(df: pd.DataFrame, path: Path, market_hint=None, code=None, name=None,
                     adjusted=False, header_hint="") -> list[Series]:
     cols = match_columns(df.columns)
+    if "date" not in cols and "code" in cols and "name" in cols:  # 名称表：只有 代码 + 名称
+        out = []
+        for c, n in zip(df[cols["code"]].astype(str), df[cols["name"]].astype(str)):
+            sym = normalize_symbol(c, market_hint)
+            if sym and n and n != "nan":
+                out.append(Series(sym, pd.DataFrame(columns=["date"] + FIELDS), name=n.strip(), source=str(path)))
+        return out
     missing = [k for k in ("date", "close") if k not in cols]
     if missing:
         raise ValueError(f"找不到列：{'、'.join(missing)}（现有列：{', '.join(map(str, df.columns[:12]))}）")

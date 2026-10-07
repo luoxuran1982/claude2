@@ -19,7 +19,6 @@ class Ctx:
     def __init__(self, panel: Panel, universe: pd.DataFrame | None = None):
         self.p = panel
         traded = panel.traded
-        first = traded.idxmax() if len(traded) else None
         alive = traded.cumsum() > 0
         # 退市后不再填充
         last_valid = traded[::-1].cumsum()[::-1] > 0
@@ -33,7 +32,6 @@ class Ctx:
         self.A = panel.raw["amount"].where(traded, 0.0).where(self.alive)
         self.universe = universe if universe is not None else traded
         self._cache: dict = {}
-        del first
 
     def get(self, key, fn):
         if key not in self._cache:

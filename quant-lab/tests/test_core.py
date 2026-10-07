@@ -122,6 +122,29 @@ class TestReaders(unittest.TestCase):
         self.assertEqual(s.df["volume"].tolist(), [400, 400])
 
 
+class TestImport(unittest.TestCase):
+    def test_tdx_folder_with_name_table(self):
+        tmp = Path(tempfile.mkdtemp())
+        d = tmp / "vipdoc" / "sz" / "lday"
+        d.mkdir(parents=True)
+        df = make_bars(80)
+        split = df.copy()
+        split.loc[40:, ["open", "high", "low", "close"]] /= 2
+        readers.write_tdx_day(d / "sz000001.day", split, "sz000001")
+        readers.write_tdx_day(d / "sz000002.day", df, "sz000002")
+        (tmp / "名称.csv").write_text("代码,名称\n000001,平安银行\n000002,*ST万科\n", encoding="gbk")
+        store = DataStore(tmp / "data")
+        meta = store.import_path(tmp, "t")
+        self.assertEqual(meta["adjust_events"], 1)
+        names = {m["symbol"]: m["name"] for m in store.meta(meta["id"])["symbols"]}
+        self.assertEqual(names, {"sz000001": "平安银行", "sz000002": "*ST万科"})
+        p = store.panel(meta["id"])
+        m = masks.build(p, min_listed_days=0, min_amount=0)
+        self.assertFalse(m.universe["sz000002"].any())   # ST 被排除
+        adj = p.adj("close")["sz000001"]
+        self.assertLess(abs(adj.iloc[40] / adj.iloc[39] - 1), 0.05)  # 复权后连续
+
+
 class TestAdjust(unittest.TestCase):
     def test_split_detected_limit_move_not(self):
         df = make_bars(40)

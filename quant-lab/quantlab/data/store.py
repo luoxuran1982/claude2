@@ -120,6 +120,7 @@ class DataStore:
             raise ValueError("没有找到可识别的 K 线文件（支持 .day / .txt / .csv / .tsv / .xlsx / .parquet）")
         progress(0.01, f"找到 {len(files)} 个文件，开始读取")
         series: dict[str, readers.Series] = {}
+        name_table: dict[str, str] = {}
         issues: list[str] = []
         done = 0
 
@@ -136,7 +137,11 @@ class DataStore:
                     issues.append(f"{p.name}: 读取失败：{err}")
                 for s in items:
                     kind, _ = classify(s.symbol)
-                    if kind not in kinds or s.df.empty:
+                    if s.df.empty:
+                        if s.name:
+                            name_table[s.symbol] = s.name
+                        continue
+                    if kind not in kinds:
                         continue
                     if s.symbol in series:  # 同一代码多个文件：合并，后读到的覆盖重叠日期
                         old = series[s.symbol]
@@ -145,6 +150,11 @@ class DataStore:
                     series[s.symbol] = s
                 if done % 50 == 0 or done == len(files):
                     progress(0.05 + 0.6 * done / len(files), f"已读取 {done}/{len(files)} 个文件，{len(series)} 只证券")
+        for sym, nm in name_table.items():
+            if sym in series and not series[sym].name:
+                series[sym].name = nm
+        if name_table:
+            issues.insert(0, f"从名称表读到 {len(name_table)} 个证券名称")
         if not series:
             raise ValueError("文件里没有识别出所选类型的证券。" + ("；".join(issues[:3]) if issues else ""))
 
@@ -188,6 +198,9 @@ class DataStore:
             bars = pd.concat([old, bars]).drop_duplicates(["symbol", "date"], keep="last")
             bars = _recompute_factor_after_merge(bars, series, auto_adjust)
             new_syms = {m["symbol"] for m in sym_meta}
+            for m in sym_meta:
+                if not m["name"] and m["symbol"] in old_meta:
+                    m["name"] = old_meta[m["symbol"]].get("name", "")
             sym_meta = [m for s, m in old_meta.items() if s not in new_syms] + sym_meta
             title = title or self.meta(ds_id).get("title", "")
             sym_meta = _refresh_ranges(bars, sym_meta)
