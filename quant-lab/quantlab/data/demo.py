@@ -30,7 +30,7 @@ def generate(n_stocks: int = 300, years: float = 8.0, end: str = "2026-09-30", s
 
     # 市场因子：带波动率状态切换
     regime = np.repeat(rng.choice([0.008, 0.013, 0.022], size=T // 60 + 1, p=[0.4, 0.4, 0.2]), 60)[:T]
-    mkt = rng.normal(0.0003, 1, T) * regime
+    mkt = rng.normal(0.0006 / 0.013, 1, T) * regime
     beta = rng.uniform(0.6, 1.4, N)
     sigma = rng.uniform(0.012, 0.035, N)
 
@@ -41,12 +41,12 @@ def generate(n_stocks: int = 300, years: float = 8.0, end: str = "2026-09-30", s
         eps = rng.normal(0, 1, N) * sigma
         alpha = np.zeros(N)
         if t >= 5:
-            alpha += -0.06 * idio_hist[t - 5:t].sum(0)                      # 短期反转
+            alpha += -0.015 * idio_hist[t - 5:t].sum(0)                      # 短期反转
         if t >= 60:
-            alpha += 0.012 * idio_hist[t - 60:t - 5].sum(0) / np.sqrt(55) / sigma * 0.01  # 中期动量
+            alpha += 0.002 * idio_hist[t - 60:t - 5].sum(0) / np.sqrt(55) / sigma * sigma.mean()  # 中期动量
         if t >= 1:
-            alpha += -0.004 * vol_shock[t - 1] * np.sign(idio_hist[t - 1])  # 放量后反转
-        alpha += -0.08 * (sigma - sigma.mean())                              # 低波动溢价
+            alpha += -0.0015 * vol_shock[t - 1] * np.sign(idio_hist[t - 1])  # 放量后反转
+        alpha += -0.02 * (sigma - sigma.mean())                              # 低波动溢价
         r = beta * mkt[t] + alpha + eps
         ret[t] = np.clip(r, -limits, limits)
         idio_hist[t] = ret[t] - beta * mkt[t]
