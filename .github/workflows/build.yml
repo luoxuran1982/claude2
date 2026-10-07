@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Test
+        run: python -m unittest discover -s tests -v
+      - name: Build
+        run: python packaging/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIVideoStudio-${{ runner.os }}
+          path: dist/AIVideoStudio

@@ -1,0 +1,8 @@
+# 必需
+Pillow>=10.0
+imageio-ffmpeg>=0.4.9   # 自带 Windows / macOS 的 ffmpeg，无需另装
+certifi                 # macOS 上 python.org 版 Python 访问 HTTPS 需要
+
+# 可选（需要时取消注释）
+# edge-tts>=6.1         # 免费在线配音（非官方接口）
+# pywebview>=5.0        # python run.py --window 用独立窗口打开
