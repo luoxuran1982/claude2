@@ -34,6 +34,19 @@ def generate(n_stocks: int = 300, years: float = 8.0, end: str = "2026-09-30", s
     beta = rng.uniform(0.6, 1.4, N)
     sigma = rng.uniform(0.012, 0.035, N)
 
+    # 上市/退市/停牌
+    alive = np.ones((T, N), bool)
+    listing = np.where(rng.random(N) < 0.25, rng.integers(0, T * 2 // 3, N), 0)
+    delist = np.where(rng.random(N) < 0.06, rng.integers(T // 3, T, N), T)
+    for j in range(N):
+        alive[: listing[j], j] = False
+        alive[delist[j]:, j] = False
+    susp = rng.random((T, N)) < 0.003
+    for _ in range(N // 20):  # 少数长停牌
+        j, t0 = rng.integers(0, N), rng.integers(0, T - 30)
+        susp[t0: t0 + rng.integers(5, 30), j] = True
+    alive &= ~susp
+
     idio_hist = np.zeros((T, N))
     ret = np.zeros((T, N))
     vol_shock = rng.normal(0, 0.35, (T, N))
@@ -48,8 +61,8 @@ def generate(n_stocks: int = 300, years: float = 8.0, end: str = "2026-09-30", s
             alpha += -0.0015 * vol_shock[t - 1] * np.sign(idio_hist[t - 1])  # 放量后反转
         alpha += -0.02 * (sigma - sigma.mean())                              # 低波动溢价
         r = beta * mkt[t] + alpha + eps
-        ret[t] = np.clip(r, -limits, limits)
-        idio_hist[t] = ret[t] - beta * mkt[t]
+        ret[t] = np.where(alive[t], np.clip(r, -limits, limits), 0.0)  # 停牌日价格不动
+        idio_hist[t] = np.where(alive[t], ret[t] - beta * mkt[t], 0.0)
 
     close = rng.uniform(5, 60, N) * np.exp(np.cumsum(np.log1p(ret), axis=0))
     prev = np.vstack([close[0] / (1 + ret[0]), close[:-1]])
@@ -67,19 +80,6 @@ def generate(n_stocks: int = 300, years: float = 8.0, end: str = "2026-09-30", s
     open_[one_word] = hi[one_word] = lo[one_word] = close[one_word]
     volume[one_word] *= 0.1
     open_, hi, lo, close = (np.round(x, 2) for x in (open_, hi, lo, close))
-
-    # 上市/退市/停牌
-    alive = np.ones((T, N), bool)
-    listing = np.where(rng.random(N) < 0.25, rng.integers(0, T * 2 // 3, N), 0)
-    delist = np.where(rng.random(N) < 0.06, rng.integers(T // 3, T, N), T)
-    for j in range(N):
-        alive[: listing[j], j] = False
-        alive[delist[j]:, j] = False
-    susp = rng.random((T, N)) < 0.003
-    for _ in range(N // 20):  # 少数长停牌
-        j, t0 = rng.integers(0, N), rng.integers(0, T - 30)
-        susp[t0: t0 + rng.integers(5, 30), j] = True
-    alive &= ~susp
 
     # 送转除权（原始价格下跳，复权因子上跳）
     factor = np.ones((T, N))

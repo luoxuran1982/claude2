@@ -182,7 +182,7 @@ def write_tdx_day(path: Path, df: pd.DataFrame, symbol: str) -> None:
     for col in ("open", "high", "low", "close"):
         arr[col] = np.round(df[col].to_numpy() * div).astype("u4")
     arr["amount"] = df["amount"].to_numpy(dtype="float32")
-    arr["volume"] = df["volume"].to_numpy().astype("u4")
+    arr["volume"] = np.clip(np.nan_to_num(df["volume"].to_numpy()), 0, 2**32 - 1).astype("u4")
     path.write_bytes(arr.tobytes())
 
 

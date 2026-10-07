@@ -78,6 +78,33 @@ def run_browser(app, url: str) -> None:
             break
 
 
+def selftest(out: str) -> None:
+    """打包后验证 LightGBM / sklearn / pyarrow 等依赖都能用：演示数据 → 三模型集成实验。"""
+    import json
+    import tempfile
+    import traceback
+    from pathlib import Path
+
+    from . import experiment
+    from .data import demo
+    from .data.store import DataStore
+    result = {"ok": False, "version": __version__}
+    try:
+        root = Path(tempfile.mkdtemp(prefix="quantlab-selftest-"))
+        store, runs = DataStore(root), experiment.Runs(root)
+        bars, names = demo.generate(80, 4, seed=1)
+        store.save_frame(bars, "selftest", names, "selftest", demo=True)
+        rid = experiment.run(store, runs, {"dataset": "selftest", "model": {"types": ["lgbm", "ridge", "mlp"]},
+                                           "walk": {"retrain_days": 126}})
+        s = runs.summary(rid)
+        result.update(ok=True, run=rid, cagr=s["perf"].get("cagr"), rank_ic=s["ic"]["rank_ic"].get("mean"),
+                      trades=s["trade_stats"].get("n_trades"), picks=len(runs.picks(rid)["picks"]))
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = f"{exc}\n{traceback.format_exc()}"
+    Path(out).write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    sys.exit(0 if result["ok"] else 1)
+
+
 def main(argv=None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] in ("cli", "demo", "import", "run", "factors", "list"):
@@ -87,7 +114,10 @@ def main(argv=None) -> None:
     ap.add_argument("--browser", action="store_true", help="用默认浏览器打开，不用独立窗口")
     ap.add_argument("--port", type=int, default=0, help="端口（默认随机）")
     ap.add_argument("--serve-only", action="store_true", help="只启动服务（开发/测试用）")
+    ap.add_argument("--selftest", metavar="OUT.json", help="自检：生成小份演示数据跑一遍完整实验，结果写到文件后退出")
     args = ap.parse_args(argv)
+    if args.selftest:
+        return selftest(args.selftest)
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")

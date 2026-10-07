@@ -63,12 +63,11 @@ def _rows(s: Samples, date_set: np.ndarray, labeled_only: bool, tradable_only: b
 
 
 def _ic(pred: np.ndarray, y: np.ndarray, d: np.ndarray) -> float:
-    df = pd.DataFrame({"p": pred, "y": y, "d": d}).dropna()
-    if df.empty:
+    from .evaluate import daily_corr, daily_rank
+    m = np.isfinite(pred) & np.isfinite(y)
+    if not m.any():
         return float("nan")
-    ics = df.groupby("d").apply(lambda g: g["p"].rank().corr(g["y"].rank()) if len(g) > 5 else np.nan,
-                                include_groups=False)
-    return float(ics.mean())
+    return float(daily_corr(daily_rank(pred[m], d[m]), daily_rank(y[m], d[m]), d[m]).mean())
 
 
 def walk_forward(s: Samples, cfg: dict, progress: Callable[[float, str], None]) -> dict:

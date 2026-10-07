@@ -1,0 +1,132 @@
+name: quant-lab
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    tags: ["quant-v*"]
+    paths: ["quant-lab/**", ".github/workflows/quant-lab.yml"]
+  workflow_dispatch:
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+defaults:
+  run:
+    working-directory: quant-lab
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: quant-lab/requirements.txt
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          grep -v pywebview requirements.txt > req-ci.txt
+          pip install -r req-ci.txt
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: JS syntax
+        if: runner.os == 'Linux'
+        run: node --check quantlab/web/app.js
+      - name: Source zip
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p ../out
+          cd .. && zip -qr out/QuantLab-source.zip quant-lab -x 'quant-lab/build/*' 'quant-lab/dist/*' '*/__pycache__/*' 'quant-lab/req-ci.txt'
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: QuantLab-source
+          path: out/QuantLab-source.zip
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: quant-lab/requirements.txt
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+      - name: Build
+        shell: bash
+        run: python packaging/build.py
+      - name: Self-test packaged app (demo data → LightGBM + ridge + MLP experiment)
+        shell: pwsh
+        run: |
+          $env:QUANTLAB_DATA = "$env:RUNNER_TEMP\ql-selftest"
+          $p = Start-Process -FilePath dist\QuantLab\QuantLab.exe -ArgumentList "--selftest","$env:RUNNER_TEMP\selftest.json" -PassThru -Wait
+          Get-Content "$env:RUNNER_TEMP\selftest.json"
+          if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+      - name: Smoke test packaged server
+        shell: bash
+        run: |
+          export QUANTLAB_DATA="$RUNNER_TEMP/ql-data"
+          dist/QuantLab/QuantLab.exe --serve-only --port 18780 &
+          ok=
+          for i in $(seq 40); do curl -sf http://127.0.0.1:18780/api/status && ok=1 && break; sleep 2; done
+          [ -n "$ok" ] || { cat "$QUANTLAB_DATA/quantlab.log" || true; exit 1; }
+          curl -sf http://127.0.0.1:18780/ | grep -q "QuantLab"
+          curl -sf http://127.0.0.1:18780/vendor/echarts.min.js -o /dev/null
+          curl -sf http://127.0.0.1:18780/api/catalog | grep -q lgbm
+          taskkill //F //IM QuantLab.exe || true
+      - name: Check WebView2 window can be created
+        shell: pwsh
+        run: |
+          $env:QUANTLAB_DATA = "$env:RUNNER_TEMP\ql-gui"
+          $p = Start-Process -FilePath dist\QuantLab\QuantLab.exe -ArgumentList "--port","18781" -PassThru
+          Start-Sleep -Seconds 20
+          $log = Get-Content "$env:QUANTLAB_DATA\quantlab.log" -Raw
+          Write-Output $log
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if ($log -match "原生窗口启动失败") { Write-Warning "WebView2 窗口在 CI 上没起来（应用会自动改用浏览器）" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuantLab-Windows-x64
+          path: |
+            quant-lab/dist/*.exe
+            quant-lab/dist/*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/quant-v')
+    needs: [test, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - run: ls -la artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: QuantLab 量化学习实验室 ${{ github.ref_name }}
+          files: artifacts/*
+          body: |
+            Windows：下载 `QuantLab-Setup-*-x64.exe` 双击安装（不需要管理员权限）；或下载 `windows-x64.zip` 解压即用。
+            源码：`QuantLab-source.zip`。详见 quant-lab/docs/安装说明.md。

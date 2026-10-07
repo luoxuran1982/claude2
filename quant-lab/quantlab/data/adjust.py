@@ -36,7 +36,8 @@ def estimate_factor(symbol: str, df: pd.DataFrame) -> tuple[np.ndarray, list[pd.
     open_ = df["open"].to_numpy()[1:]
     gap = open_ / prev_close - 1
     rate = limit_rate_series(symbol, df["date"])[1:]
-    event = (np.abs(gap) > rate + MARGIN)
+    tick = 0.011 / np.maximum(prev_close, 1e-6)       # 价格精确到分：低价股一个最小价位就可能超过 2%
+    event = (np.abs(gap) > rate + MARGIN + tick)
     event[: max(NEW_LISTING_DAYS - 1, 0)] = False
     step = np.ones(n)
     step[1:][event] = prev_close[event] / open_[event]

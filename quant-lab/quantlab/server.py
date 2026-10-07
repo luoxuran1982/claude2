@@ -170,6 +170,8 @@ class App:
         path = str(body.get("path") or "").strip().strip('"')
         if not path:
             raise ValueError("请填写或选择 K 线文件夹")
+        if not Path(path).expanduser().exists():
+            raise FileNotFoundError(f"路径不存在：{path}")
         kinds = tuple(body.get("kinds") or ("stock", "index"))
         title = str(body.get("title") or "").strip()
         merge_into = body.get("merge_into") or None

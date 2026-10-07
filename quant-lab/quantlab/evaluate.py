@@ -15,18 +15,30 @@ def _r(x, n=4):
     return round(x, n) if np.isfinite(x) else None
 
 
-def ic_series(score: np.ndarray, y: np.ndarray, date_idx: np.ndarray, dates) -> pd.DataFrame:
-    df = pd.DataFrame({"s": score, "y": y, "d": date_idx})
-    df = df[np.isfinite(df["s"]) & np.isfinite(df["y"])]
-    if df.empty:
-        return pd.DataFrame(columns=["ic", "rank_ic"])
-    df["sr"] = df.groupby("d")["s"].rank()
-    df["yr"] = df.groupby("d")["y"].rank()
+def daily_corr(x: np.ndarray, y: np.ndarray, d: np.ndarray, min_n: int = 10) -> pd.Series:
+    """按日期分组的皮尔逊相关（向量化：只用分组求和，不逐组 apply）。"""
+    m = np.isfinite(x) & np.isfinite(y)
+    df = pd.DataFrame({"d": d[m], "x": x[m], "y": y[m]})
+    df["xy"], df["xx"], df["yy"] = df.x * df.y, df.x * df.x, df.y * df.y
     g = df.groupby("d")
-    n = g.size()
-    out = pd.DataFrame({"ic": g.apply(lambda x: x["s"].corr(x["y"]), include_groups=False),
-                        "rank_ic": g.apply(lambda x: x["sr"].corr(x["yr"]), include_groups=False)})
-    out = out[n >= 10]
+    mean, n = g.mean(), g.size()
+    cov = mean.xy - mean.x * mean.y
+    vx, vy = mean.xx - mean.x ** 2, mean.yy - mean.y ** 2
+    out = cov / np.sqrt((vx * vy).where((vx > 1e-18) & (vy > 1e-18)))
+    return out[n >= min_n]
+
+
+def daily_rank(x: np.ndarray, d: np.ndarray) -> np.ndarray:
+    return pd.Series(x).groupby(d).rank().to_numpy()
+
+
+def ic_series(score: np.ndarray, y: np.ndarray, date_idx: np.ndarray, dates) -> pd.DataFrame:
+    m = np.isfinite(score) & np.isfinite(y)
+    score, y, date_idx = np.asarray(score)[m], np.asarray(y)[m], np.asarray(date_idx)[m]
+    if not len(score):
+        return pd.DataFrame(columns=["ic", "rank_ic"])
+    out = pd.DataFrame({"ic": daily_corr(score, y, date_idx),
+                        "rank_ic": daily_corr(daily_rank(score, date_idx), daily_rank(y, date_idx), date_idx)}).dropna(how="all")
     out.index = pd.DatetimeIndex(np.asarray(dates)[out.index])
     return out
 
@@ -73,25 +85,26 @@ def group_returns(score, y, date_idx, dates, n_groups: int = 5, horizon: int = 5
 def factor_report(s: Samples, rows: np.ndarray | None = None) -> list[dict]:
     """单因子检验：每个因子单独作为打分时的 RankIC、ICIR、多空分组差。"""
     rows = np.arange(len(s.y)) if rows is None else rows
-    y = s.y_raw[rows]
+    rows = rows[np.isfinite(s.y_raw[rows])]
+    y = s.y_raw[rows].astype("float64")
     d = s.date_idx[rows]
-    yr = pd.Series(y).groupby(d).rank().to_numpy()
+    yr = daily_rank(y, d)
     out = []
     for k, name in enumerate(s.feature_names):
         x = s.X[rows, k].astype("float64")
-        df = pd.DataFrame({"x": x, "y": yr, "d": d, "raw": y})
-        df = df[np.isfinite(df["x"]) & np.isfinite(df["y"])]
-        if df.empty:
+        ok = np.isfinite(x)
+        if not ok.any():
             continue
-        df["xr"] = df.groupby("d")["x"].rank()
-        g = df.groupby("d")
-        ics = g.apply(lambda t: t["xr"].corr(t["y"]) if len(t) > 10 else np.nan, include_groups=False).dropna()
-        q = g["x"].transform(lambda t: t.rank(pct=True))
-        top = df.loc[q > 0.8].groupby("d")["raw"].mean()
-        bot = df.loc[q <= 0.2].groupby("d")["raw"].mean()
+        xr = np.where(ok, daily_rank(np.where(ok, x, np.nan), d), np.nan)
+        yk = yr if ok.all() else daily_rank(np.where(ok, y, np.nan), d)
+        ics = daily_corr(xr, yk, d).dropna()
+        # 多空差：因子最高 20% 与最低 20% 的平均未来收益之差
+        q = pd.Series(np.where(ok, x, np.nan)).groupby(d).rank(pct=True).to_numpy()
+        top = pd.Series(y[q > 0.8]).groupby(d[q > 0.8]).mean()
+        bot = pd.Series(y[q <= 0.2]).groupby(d[q <= 0.2]).mean()
         spread = (top - bot).mean()
         out.append({"name": name, "rank_ic": _r(ics.mean()), "icir": _r(ics.mean() / ics.std() if ics.std() > 0 else np.nan),
-                    "positive": _r((ics > 0).mean()), "spread": _r(spread, 5), "coverage": _r(len(df) / max(len(rows), 1), 3),
+                    "positive": _r((ics > 0).mean()), "spread": _r(spread, 5), "coverage": _r(ok.mean(), 3),
                     "series": [_r(v) for v in ics.rolling(12, min_periods=1).mean().iloc[::max(1, len(ics) // 120)]]})
     out.sort(key=lambda r: abs(r["rank_ic"] or 0), reverse=True)
     return out
