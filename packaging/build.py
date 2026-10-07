@@ -14,6 +14,12 @@ from pathlib import Path
 
 import PyInstaller.__main__
 
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 
