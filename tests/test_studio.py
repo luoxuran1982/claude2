@@ -318,7 +318,7 @@ class ServerTests(unittest.TestCase):
 
 
 def probe_duration(path):
-    out = subprocess.run([find_ffmpeg(), "-i", str(path)], capture_output=True, text=True).stderr
+    out = subprocess.run([find_ffmpeg(), "-i", str(path)], capture_output=True, encoding="utf-8", errors="replace").stderr
     import re
 
     h, m, s = re.search(r"Duration: (\d+):(\d+):([\d.]+)", out).groups()
