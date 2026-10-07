@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>舆情监控</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M6 21l6-6 5 4 9-10' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="nav">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)"/><path d="M6 21l6-6 5 4 9-10" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>舆情监控</span>
+    </div>
+    <a href="#/overview" data-page="overview">总览</a>
+    <a href="#/feed" data-page="feed">资讯流</a>
+    <a href="#/entities" data-page="entities">监控对象</a>
+    <a href="#/sources" data-page="sources">数据源</a>
+    <a href="#/alerts" data-page="alerts">预警中心 <b class="badge" id="navAlertBadge" hidden></b></a>
+    <a href="#/settings" data-page="settings">设置</a>
+    <div class="nav-foot" id="navFoot"></div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <h1 id="pageTitle">总览</h1>
+      <div class="top-right">
+        <span class="conn" id="conn" title="与后台的实时连接"><i></i><span>连接中</span></span>
+        <button class="btn" id="btnRefresh" title="让所有启用的数据源立即抓取一次">立即刷新</button>
+        <button class="icon-btn" id="btnTheme" title="切换浅色/深色">◐</button>
+        <button class="btn danger-ghost" id="btnExit" title="退出程序（关闭后台和窗口）">退出</button>
+      </div>
+    </header>
+    <div class="banner" id="banner" hidden></div>
+    <main id="view"></main>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="modal-back" id="modalBack" hidden><div class="modal" id="modal" role="dialog" aria-modal="true"></div></div>
+<div class="overlay" id="overlay" hidden>
+  <div class="overlay-card">
+    <h2>后台已退出</h2>
+    <p id="overlayReason"></p>
+    <p class="muted">现在可以关闭这个窗口。下次双击程序会重新启动。</p>
+  </div>
+</div>
+<div class="tip" id="tip" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
