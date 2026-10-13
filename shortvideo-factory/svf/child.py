@@ -74,7 +74,10 @@ def watchdog(parent_pid: int) -> None:
     while True:
         time.sleep(WATCH_INTERVAL)
         if not parent_alive(parent_pid):
-            print(f"[svf-child] 启动器（PID {parent_pid}）已不在，结束生成界面后台及其子进程", flush=True)
+            try:   # 输出管道可能已随启动器一起断开，写不出去也要继续收尾
+                print(f"[svf-child] 启动器（PID {parent_pid}）已不在，结束生成界面后台及其子进程", flush=True)
+            except Exception:
+                pass
             kill_own_tree()
 
 
@@ -115,6 +118,14 @@ def main(argv=None) -> None:
             pass
 
     threading.Thread(target=watchdog, args=(args.parent_pid,), name="svf-watchdog", daemon=True).start()
+
+    # 固定用随包的 imageio-ffmpeg，不受系统 PATH 里其他版本 FFmpeg 的影响（用户在上游设置里填了 ffmpeg_path 时仍以那个为准）
+    if not os.environ.get("IMAGEIO_FFMPEG_EXE"):
+        try:
+            import imageio_ffmpeg
+            os.environ["IMAGEIO_FFMPEG_EXE"] = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[svf-child] 没找到随包 FFmpeg（{exc}），交给上游自行查找", flush=True)
 
     upstream = os.path.abspath(args.upstream)
     if args.extra_path and os.path.isdir(args.extra_path):

@@ -130,7 +130,7 @@ def wait_record(data: Path, proc, timeout=60) -> dict:
             fail(f"程序提前退出，返回码 {proc.returncode}")
         try:
             rec = json.loads((data / "run.json").read_text(encoding="utf-8"))
-            if rec.get("shell_port"):
+            if rec.get("shell_port") and rec.get("launcher_pid") == proc.pid:   # 不要读到上次留下的旧记录
                 return rec
         except (OSError, ValueError):
             pass
