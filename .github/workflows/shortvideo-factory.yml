@@ -1,0 +1,86 @@
+name: AI 短视频工厂
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    # 只在本项目自己的文件变动时构建（docs/ 会打进安装包，文档改动也要重新构建）
+    paths: ["shortvideo-factory/**", ".github/workflows/shortvideo-factory.yml"]
+  workflow_dispatch:
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+defaults:
+  run:
+    working-directory: shortvideo-factory
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-runtime.txt -r requirements.txt pytest
+      - name: 外壳单元测试
+        run: python -m unittest discover -s tests -v
+      - name: 外壳 JS 测试
+        run: node tests/zoom.test.js
+      - name: 上游自带测试（挑能离线跑的）
+        run: python tests/run_upstream_tests.py
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-latest          # Apple Silicon（用户的 Mac 是 M4），不构建 Intel 版
+            label: macOS-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow uv
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: choco install nsis -y --no-progress
+      - name: Build
+        # 启动器（PyInstaller）+ 随包 Python 运行时（uv 下载 python-build-standalone，按上游锁定版本装依赖）
+        # Windows：Setup.exe（NSIS）+ 免安装 zip；macOS：.app 打成 .dmg
+        shell: bash
+        run: python packaging/build.py
+      - name: Smoke test
+        # 运行包里的程序：接口、使用指南、Streamlit 经代理可用；退出后进程结束、端口释放；强制结束后后台自行退出；窗口能创建
+        shell: bash
+        run: python packaging/smoke.py
+      - name: List outputs
+        shell: bash
+        run: ls -la dist && cat dist/build-info.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShortVideoFactory-${{ matrix.label }}
+          path: |
+            shortvideo-factory/dist/*.exe
+            shortvideo-factory/dist/*.zip
+            shortvideo-factory/dist/*.dmg
+          if-no-files-found: error
+          compression-level: 0
