@@ -282,9 +282,11 @@ class SupervisorTest(unittest.TestCase):
             sys.path.insert(0, {str(ROOT)!r})
             from svf import child
             child.WATCH_INTERVAL = 0.5
+            # 和 svf_child.py 一样，启动器 PID 在启动时就确定（真实代码由 --parent-pid 传入），再开始看门狗
+            ppid = os.getppid()
+            threading.Thread(target=child.watchdog, args=(ppid,), daemon=True).start()
             g = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
             print(os.getpid(), g.pid, flush=True)
-            threading.Thread(target=child.watchdog, args=(os.getppid(),), daemon=True).start()
             time.sleep(120)
         """)
         launcher_code = textwrap.dedent(f"""
