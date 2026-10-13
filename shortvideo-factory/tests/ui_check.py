@@ -128,6 +128,9 @@ def dismiss_tour(frame):
                 frame.page.keyboard.press("Escape")
         except Exception:  # noqa: BLE001
             frame.page.keyboard.press("Escape")
+    # 仍关不掉（引导指向的元素不在视野里时）就直接移除遮罩，只影响这次检查
+    frame.evaluate("document.querySelectorAll('.driver-overlay, .driver-popover').forEach(e => e.remove());"
+                   "document.body.classList.remove('driver-active', 'driver-fade')")
 
 
 def zoom_state(page, frame):

@@ -17,7 +17,7 @@
 | 卸载 | 把 `.app` 拖进废纸篓 | 「设置 → 应用」或开始菜单里的卸载快捷方式 |
 | 数据目录（卸载后保留） | `~/Library/Application Support/ShortVideoFactory/` | `%LOCALAPPDATA%\ShortVideoFactory\` |
 
-关闭窗口或退出时，生成界面后台（Streamlit）、正在运行的 FFmpeg 等本应用启动的进程都会结束，端口释放；最小化只是隐藏，应用继续运行。安装包约 300 MB（自带 Python 运行时和视频处理组件），不需要另装 Python 或 FFmpeg。
+关闭窗口或退出时，生成界面后台（Streamlit）、正在运行的 FFmpeg 等本应用启动的进程都会结束，端口释放；最小化只是隐藏，应用继续运行。安装包约 450 MB（安装后约 1 GB）（自带 Python 运行时和视频处理组件），不需要另装 Python 或 FFmpeg。
 
 ## 第一次使用要准备的
 
