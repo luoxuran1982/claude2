@@ -56,4 +56,11 @@ jobs:
           done
           ls -la release
       - name: 发布
-        run: gh release create "$TAG" release/* --target "$SHA" --title "$TITLE" --notes "$NOTES"
+        # 同名 Release 已存在时（例如补传漏掉的安装包），覆盖上传文件并更新说明
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" release/* --target "$SHA" --title "$TITLE" --notes "$NOTES"
+          fi
