@@ -15,7 +15,7 @@ PROJECT = Path(__file__).resolve().parent.parent          # 源码运行时的 q
 SRC_ZIP_NAME = "QuantLab-source.zip"
 # 手写源码：按模式收录；排除第三方（vendor）、生成文件和运行产物
 SRC_PATTERNS = ("run.py", "requirements.txt", "start-windows.bat", "quantlab/**/*.py", "quantlab/web/*.html",
-                "quantlab/web/*.js", "quantlab/web/*.css", "quantlab/web/*.svg", "packaging/*.py", "packaging/*.nsi",
+                "quantlab/web/*.js", "quantlab/web/*.css", "quantlab/web/*.svg", "packaging/*.py", "packaging/*.nsi", "packaging/*.sh",
                 "tests/*.py")
 SRC_EXCLUDE = ("vendor/", "__pycache__/", "build/", "dist/")
 LANG = {".py": "Python", ".js": "JavaScript", ".html": "HTML", ".css": "CSS", ".svg": "SVG", ".nsi": "NSIS",

@@ -39,7 +39,9 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: JS syntax
         if: runner.os == 'Linux'
-        run: node --check quantlab/web/app.js
+        run: |
+          node --check quantlab/web/app.js
+          node --check quantlab/web/markdown.js
       - name: Source zip
         if: runner.os == 'Linux'
         run: |
@@ -78,18 +80,12 @@ jobs:
           $p = Start-Process -FilePath dist\QuantLab\QuantLab.exe -ArgumentList "--selftest","$env:RUNNER_TEMP\selftest.json" -PassThru -Wait
           Get-Content "$env:RUNNER_TEMP\selftest.json"
           if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
-      - name: Smoke test packaged server
+      - name: Smoke test packaged server (APIs, guide docs, source, quit releases port)
         shell: bash
         run: |
           export QUANTLAB_DATA="$RUNNER_TEMP/ql-data"
-          dist/QuantLab/QuantLab.exe --serve-only --port 18780 &
-          ok=
-          for i in $(seq 40); do curl -sf http://127.0.0.1:18780/api/status && ok=1 && break; sleep 2; done
-          [ -n "$ok" ] || { cat "$QUANTLAB_DATA/quantlab.log" || true; exit 1; }
-          curl -sf http://127.0.0.1:18780/ | grep -q "QuantLab"
-          curl -sf http://127.0.0.1:18780/vendor/echarts.min.js -o /dev/null
-          curl -sf http://127.0.0.1:18780/api/catalog | grep -q lgbm
-          taskkill //F //IM QuantLab.exe || true
+          dist/QuantLab/QuantLab.exe --serve-only --port 18780 --url-file "$RUNNER_TEMP/url.txt" &
+          bash packaging/ci_smoke.sh 18780 "$RUNNER_TEMP/url.txt"
       - name: Check WebView2 window can be created
         shell: pwsh
         run: |
@@ -108,9 +104,47 @@ jobs:
             quant-lab/dist/*.zip
           if-no-files-found: error
 
+  build-macos:
+    # 只出 Apple Silicon 版（用户的 Mac 是 M4），不出 Intel 版
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: quant-lab/requirements.txt
+      - name: Install
+        run: |
+          brew install libomp
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+      - name: Build (.app + .dmg)
+        run: python packaging/build.py
+      - name: Check docs and sources are bundled
+        run: |
+          find dist/QuantLab.app -path "*projectdocs/docs/01*" | grep -q .
+          find dist/QuantLab.app -name QuantLab-source.zip | grep -q .
+      - name: Self-test packaged app (demo data → LightGBM + ridge + MLP experiment)
+        run: |
+          export QUANTLAB_DATA="$RUNNER_TEMP/ql-selftest"
+          dist/QuantLab.app/Contents/MacOS/QuantLab --selftest "$RUNNER_TEMP/selftest.json" || { cat "$RUNNER_TEMP/selftest.json"; exit 1; }
+          cat "$RUNNER_TEMP/selftest.json"
+      - name: Smoke test packaged server (APIs, guide docs, source, quit releases port)
+        run: |
+          export QUANTLAB_DATA="$RUNNER_TEMP/ql-data"
+          dist/QuantLab.app/Contents/MacOS/QuantLab --serve-only --port 18780 --url-file "$RUNNER_TEMP/url.txt" &
+          bash packaging/ci_smoke.sh 18780 "$RUNNER_TEMP/url.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuantLab-macOS-arm64
+          path: quant-lab/dist/*.dmg
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/quant-v')
-    needs: [test, build-windows]
+    needs: [test, build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -129,4 +163,5 @@ jobs:
           files: artifacts/*
           body: |
             Windows：下载 `QuantLab-Setup-*-x64.exe` 双击安装（不需要管理员权限）；或下载 `windows-x64.zip` 解压即用。
-            源码：`QuantLab-source.zip`。详见 quant-lab/docs/安装说明.md。
+            macOS（Apple Silicon）：下载 `QuantLab-*-macos-arm64.dmg`，把 QuantLab.app 拖进「应用程序」；首次打开右键 →「打开」。
+            源码：`QuantLab-source.zip`。详见 quant-lab/docs/00 项目阅读入口.md。

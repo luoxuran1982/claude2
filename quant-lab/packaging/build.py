@@ -111,7 +111,14 @@ def finish_macos() -> None:
     os.symlink("/Applications", stage / "Applications")
     out = DIST / f"{NAME}-{__version__}-macos-arm64.dmg"
     out.unlink(missing_ok=True)
-    subprocess.run(["hdiutil", "create", "-volname", NAME, "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(out)], check=True)
+    for attempt in range(3):  # CI 上 hdiutil 偶尔报 "Resource busy"，重试
+        r = subprocess.run(["hdiutil", "create", "-volname", NAME, "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(out)])
+        if r.returncode == 0:
+            break
+        import time
+        time.sleep(5 * (attempt + 1))
+    else:
+        raise SystemExit("hdiutil 生成 dmg 失败")
     print("macOS 安装包：", out)
 
 
