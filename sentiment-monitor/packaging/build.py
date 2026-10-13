@@ -39,7 +39,7 @@ src_files = sorted({f.relative_to(ROOT).as_posix() for pat in SOURCE_PATTERNS fo
                     if f.is_file() and "__pycache__" not in f.parts})
 for rel in src_files:
     parent = Path(rel).parent.as_posix()
-    data += ["--add-data", f"{rel}{os.pathsep}source/{parent if parent != '.' else '.'}"]
+    data += ["--add-data", f"{rel}{os.pathsep}" + (f"source/{parent}" if parent != "." else "source")]
 print("打包源码文件：", len(src_files))
 
 hidden = ["monitor.server", "monitor.demo", "monitor.guide", "monitor.procinfo"]

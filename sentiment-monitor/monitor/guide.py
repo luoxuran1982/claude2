@@ -50,6 +50,8 @@ SOURCE_ROLES = {
     "monitor/web/markdown.js": "随应用打包的小型 Markdown 渲染器（不依赖 CDN）",
     "monitor/web/style.css": "样式（浅色/深色主题）",
     "packaging/build.py": "PyInstaller 打包脚本（把文档和源码一起打进安装包）",
+    "packaging/smoke.py": "打包产物冒烟测试：接口、文档、源码在包内，退出后端口释放",
+    "packaging/SentimentMonitor.iss": "Windows 安装程序（Inno Setup）脚本",
     "tests/test_monitor.py": "离线单元测试和端到端退出测试",
 }
 

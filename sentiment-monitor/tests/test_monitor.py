@@ -388,6 +388,34 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.app.bus.clients(), 0)
 
 
+class ProcInfoTest(unittest.TestCase):
+    """运行状态：应用窗口及其子进程逐个列出；进程结束后不保留旧值。"""
+
+    def test_window_and_children(self):
+        from monitor import procinfo
+
+        code = "import subprocess,sys,time; c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); print(c.pid, flush=True); time.sleep(30)"
+        proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+        try:
+            child = int(proc.stdout.readline())
+            br = BrowserWindow()
+            br.proc = proc
+            snap = procinfo.snapshot(br, "chrome")
+            pids = [r["pid"] for r in snap["processes"]]
+            self.assertEqual(pids[0], os.getpid())
+            self.assertIn(proc.pid, pids)
+            if procinfo.children(proc.pid) is not None:
+                self.assertIn(child, pids)
+            self.assertTrue(all(r["mem_mib"] is None or r["mem_mib"] > 0 for r in snap["processes"]))
+        finally:
+            proc.kill()
+            proc.wait()
+            subprocess.run(["kill", str(child)]) if not sys.platform.startswith("win") else None
+        snap = procinfo.snapshot(br, "chrome")
+        self.assertNotIn(proc.pid, [r["pid"] for r in snap["processes"]])
+        self.assertIsNone(procinfo.mem_bytes(10 ** 7))  # 不存在的进程：读不到就是 None
+
+
 class WatchdogTest(unittest.TestCase):
     def test_rules(self):
         bus = EventBus()
