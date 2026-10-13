@@ -17,6 +17,9 @@ on:
       notes:
         description: "下载和安装说明"
         required: true
+      target:
+        description: "标签指向的提交（留空 = 那次构建的提交）。应用代码相同、只差工作流文件时，可指向本分支最新提交"
+        required: false
 
 permissions:
   contents: write
@@ -32,13 +35,14 @@ jobs:
       TAG: ${{ inputs.tag }}
       TITLE: ${{ inputs.title }}
       NOTES: ${{ inputs.notes }}
+      TARGET: ${{ inputs.target }}
     steps:
       - name: 下载那次构建的产物
         run: |
           set -euo pipefail
           sha=$(gh run view "$RUN_ID" --json headSha,conclusion -q 'select(.conclusion=="success") | .headSha')
           [ -n "$sha" ] || { echo "运行 $RUN_ID 没有成功，不发布"; exit 1; }
-          echo "SHA=$sha" >> "$GITHUB_ENV"
+          echo "SHA=${TARGET:-$sha}" >> "$GITHUB_ENV"
           gh run download "$RUN_ID" -D artifacts
           mkdir release
           for d in artifacts/*/; do
