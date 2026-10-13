@@ -1,0 +1,82 @@
+name: 舆情监控系统
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    paths: ["sentiment-monitor/**", ".github/workflows/sentiment-monitor.yml"]
+    tags: ["monitor-v*", "sentiment-monitor-v*"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: sentiment-monitor
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows x64 + macOS Apple Silicon（macos-latest 是 arm64）。不出 Intel 版。
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: python -m pip install --upgrade pip pyinstaller -r requirements.txt
+      - name: Test
+        run: python -m unittest discover -s tests -v
+      - name: Build
+        run: python packaging/build.py
+      - name: Version
+        id: ver
+        run: echo "v=$(python -c 'import monitor; print(monitor.__version__)')" >> "$GITHUB_OUTPUT"
+
+      # ---------------- Windows：免安装 zip + 安装程序
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: python packaging/smoke.py dist/SentimentMonitor/SentimentMonitor.exe
+      - name: Installer (Windows, Inno Setup)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress | Out-Null }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=${{ steps.ver.outputs.v }}" packaging\SentimentMonitor.iss
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: SentimentMonitor-Windows
+          path: sentiment-monitor/dist/SentimentMonitor
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: SentimentMonitor-Setup-Windows
+          path: sentiment-monitor/dist/SentimentMonitor-Setup.exe
+          if-no-files-found: warn
+
+      # ---------------- macOS：.app 装进 .dmg
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: python packaging/smoke.py dist/SentimentMonitor.app/Contents/MacOS/SentimentMonitor
+      - name: DMG (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          test -d dist/SentimentMonitor.app
+          file dist/SentimentMonitor.app/Contents/MacOS/SentimentMonitor
+          mkdir -p dist/dmg
+          cp -R dist/SentimentMonitor.app dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname SentimentMonitor -srcfolder dist/dmg -ov -format UDZO dist/SentimentMonitor.dmg
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: SentimentMonitor-macOS
+          path: sentiment-monitor/dist/SentimentMonitor.dmg
