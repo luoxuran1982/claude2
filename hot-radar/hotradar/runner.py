@@ -152,7 +152,7 @@ class Progress:
         if pid in self.platforms_done:
             return
         self.platforms_done.append(pid)
-        (self.platforms_ok.append(pid) if ok else self.platforms_failed.__setitem__(pid, why[:200]))
+        (self.platforms_ok.append(pid) if ok else self.platforms_failed.__setitem__(pid, humanize_error(why)))
         self.stage = "抓取热榜"
 
     def percent(self, finished: bool) -> int:
@@ -183,6 +183,30 @@ class Progress:
         }
 
 
+def humanize_error(why: str) -> str:
+    """把 requests 等库的英文报错归成一句中文（原文仍完整保留在日志里）。"""
+    w = why or ""
+    m = (re.search(r"Tunnel connection failed: ([45]\d\d)", w) or re.search(r"\b([45]\d\d) (?:Client|Server) Error", w)
+         or re.search(r"status(?: code)?[ :=]+([45]\d\d)", w, re.I))
+    if "Tunnel connection failed" in w or "ProxyError" in w:
+        return f"网络或代理拒绝连接{('（' + m.group(1) + '）') if m else ''}：本机网络、公司防火墙或代理设置挡住了 newsnow"
+    if re.search(r"getaddrinfo|Name or service not known|nodename nor servname|NameResolutionError|Failed to resolve", w):
+        return "域名解析失败：连不上 newsnow（检查网络或 DNS）"
+    if re.search(r"timed out|Timeout", w, re.I):
+        return "请求超时：newsnow 响应太慢或网络不稳定"
+    if "SSLError" in w or "CERTIFICATE" in w.upper():
+        return "HTTPS 证书校验失败（可能被网络中间设备拦截）"
+    if re.search(r"Connection(Error|ResetError| aborted| refused)|Max retries exceeded|RemoteDisconnected", w):
+        return "连不上服务器：网络不通或 newsnow 暂时不可用"
+    if m and ("HTTPError" in w or "Client Error" in w or "Server Error" in w):
+        return f"newsnow 返回错误状态 {m.group(1)}（可能限流或服务异常）"
+    if "响应状态异常" in w:
+        return "newsnow 返回的数据状态异常：" + w.split("响应状态异常", 1)[1].strip(": ：")[:60]
+    if "Expecting value" in w or "JSON" in w:
+        return "返回内容不是有效数据（接口可能改版或被拦截）"
+    return w[:200] or "失败（原因见日志）"
+
+
 class Runner:
     def __init__(self, root: Path):
         self.root = root
@@ -195,6 +219,7 @@ class Runner:
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.runs_file = root / "runs.json"
         self.settings_file = root / "settings.json"
+        self.job_lock = root / ".job.lock"
         self.settings = self._load_settings()
         self.next_auto = None if not self.settings["auto_enabled"] else time.time() + 60
         self.mcp_proc: subprocess.Popen | None = None
@@ -276,6 +301,23 @@ class Runner:
         return "\n".join(lines[-tail:])
 
     # ------------------------------------------------------------ 启动/停止
+    def _other_instance_job(self) -> int | None:
+        """同一数据目录被两个热点雷达同时打开时，避免两边同时抓取：看 .job.lock 里的工作进程是否还活着。"""
+        try:
+            pid = int(self.job_lock.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            return None
+        if self.proc is not None and self.proc.pid == pid:
+            return None
+        try:
+            import psutil
+            p = psutil.Process(pid)
+            if p.status() != psutil.STATUS_ZOMBIE and "--worker" in " ".join(p.cmdline()):
+                return pid
+        except Exception:  # noqa: BLE001  进程不在了、没有 psutil 或无权限
+            return None
+        return None
+
     def busy(self) -> bool:
         with self.lock:
             return self.proc is not None and self.proc.poll() is None
@@ -286,6 +328,10 @@ class Runner:
         with self.lock:
             if self.busy():
                 return {"started": False, "reason": f"正在{TASK_LABELS[self.job['task']]}，请等它结束或先停止"}
+            other = self._other_instance_job()
+            if other:
+                return {"started": False, "reason": f"另一个热点雷达窗口正在运行任务（工作进程 PID {other}），请等它结束；"
+                                                    "同一份数据同时抓取会互相等待数据库"}
             ws_name = WS_OF[task]
             ws = paths.workspace_dir(ws_name, self.root)
             configio.ensure_workspace(ws)
@@ -306,6 +352,10 @@ class Runner:
                 env.update(configio.secrets_env(self.root))
             cmd = worker_command(task, ws, log_path)
             self.proc = _popen(cmd, ws, env)
+            try:
+                configio.atomic_write(self.job_lock, str(self.proc.pid).encode("ascii"))
+            except OSError:
+                pass
             self.progress = Progress(task)
             self.job = {"id": run_id, "task": task, "label": TASK_LABELS[task], "workspace": ws_name, "trigger": trigger,
                         "pid": self.proc.pid, "started_at": now.isoformat(timespec="seconds"), "log": log_path.name,
@@ -369,7 +419,7 @@ class Runner:
                 status = "failed"
             summary = f"热榜 {ok_n} 个平台成功、{fail_n} 个失败" + (f"；RSS {view['rss_summary']}" if view["rss_summary"] else "")
             if status == "failed" and not ok_n and fail_n:
-                summary += "。全部平台都没取到：多半是网络连不上 newsnow 接口（见日志）"
+                summary += "。全部平台都没取到：多半是网络连不上 newsnow 接口，没有生成新报告（见日志）"
         else:
             status = "ok" if code == 0 else "failed"
             summary = "完成" if code == 0 else f"未通过（退出码 {code}），详见日志"
@@ -384,6 +434,11 @@ class Runner:
         except OSError:
             log.exception("保存运行记录失败")
         log.info("%s结束：%s（%s）", job["label"], status, summary)
+        try:
+            if self.job_lock.read_text(encoding="ascii").strip() == str(proc.pid):
+                self.job_lock.unlink()
+        except OSError:
+            pass
         with self.lock:
             if self.proc is proc:
                 self.proc = None

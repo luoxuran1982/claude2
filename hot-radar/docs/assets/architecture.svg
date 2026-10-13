@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760" width="1120" height="760" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a505a"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#d9480f"/></marker>
+  </defs>
+  <rect width="1120" height="760" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="700" fill="#13161b">热点雷达 1.0.0 系统架构：桌面外壳（我们写的）+ 上游 TrendRadar 6.11.0</text>
+
+  <!-- 用户与窗口 -->
+  <rect x="24" y="56" width="1072" height="70" rx="10" fill="#e9f1fb" stroke="#1d4f8a"/>
+  <text x="40" y="82" font-weight="700" fill="#1d4f8a">应用窗口（pywebview）</text>
+  <text x="40" y="106" fill="#1d4f8a">Windows：WebView2（Edge 内核，子进程 msedgewebview2.exe）　macOS：WKWebView（系统托管的 WebKit 进程）　备用：系统默认浏览器</text>
+  <text x="760" y="82" fill="#1d4f8a">网页：首页 · 最新报告 · 历史报告 · 配置</text>
+  <text x="760" y="106" fill="#1d4f8a">　　　运行状态 · 使用指南 · 缩放 · 退出</text>
+
+  <line x1="300" y1="126" x2="300" y2="160" stroke="#4a505a" stroke-width="2" marker-end="url(#a)"/>
+  <text x="310" y="148" fill="#4a505a" font-size="13">HTTP 127.0.0.1:随机端口（写操作带令牌）</text>
+
+  <!-- 主进程 -->
+  <rect x="24" y="162" width="520" height="300" rx="10" fill="#fdeee6" stroke="#d9480f" stroke-width="1.5"/>
+  <text x="40" y="188" font-weight="700" fill="#d9480f">主进程 HotRadar（hotradar/，常驻到窗口关闭）</text>
+  <g fill="#13161b">
+    <rect x="40" y="200" width="236" height="52" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="52" y="222">server.py 本机服务</text><text x="52" y="242" font-size="12" fill="#4a505a">接口、静态网页、报告、Host/令牌校验</text>
+    <rect x="292" y="200" width="236" height="52" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="304" y="222">runner.py 任务管理</text><text x="304" y="242" font-size="12" fill="#4a505a">启停工作进程、读日志算进度、定时抓取</text>
+    <rect x="40" y="262" width="236" height="52" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="52" y="284">configio.py 配置读写</text><text x="52" y="304" font-size="12" fill="#4a505a">ruamel 保留注释写回 config.yaml、密钥</text>
+    <rect x="292" y="262" width="236" height="52" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="304" y="284">keywords.py 关键词检查</text><text x="304" y="304" font-size="12" fill="#4a505a">单独加载上游 frequency.py 试匹配</text>
+    <rect x="40" y="324" width="236" height="52" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="52" y="346">reports.py 报告清单</text><text x="52" y="366" font-size="12" fill="#4a505a">output/html 白名单读取</text>
+    <rect x="292" y="324" width="236" height="52" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="304" y="346">guide.py / procinfo.py</text><text x="304" y="366" font-size="12" fill="#4a505a">使用指南与源码、进程 PID 与内存</text>
+    <rect x="40" y="386" width="488" height="62" rx="6" fill="#fff" stroke="#e2a184"/>
+    <text x="52" y="408">app.py 启停：窗口关闭 / ⌘Q / Alt+F4 / 「退出」→ 停定时线程 → 结束工作进程</text>
+    <text x="52" y="430" font-size="12" fill="#4a505a">→ 停 MCP → 停 HTTP 服务并释放端口。没有关窗后继续运行的常驻后台。</text>
+  </g>
+
+  <!-- 工作进程 -->
+  <rect x="580" y="162" width="516" height="300" rx="10" fill="#f4f6fa" stroke="#4a505a" stroke-width="1.5"/>
+  <text x="596" y="188" font-weight="700" fill="#13161b">工作进程（按需启动，同一程序 --worker；worker.py）</text>
+  <text x="596" y="210" font-size="12" fill="#4a505a">切到工作区目录、不开浏览器、不查上游版本；每 2 秒检查主进程，主进程不在就退出</text>
+  <rect x="596" y="222" width="484" height="168" rx="6" fill="#fff" stroke="#9aa1ab"/>
+  <text x="608" y="244" font-weight="700">上游 TrendRadar（upstream/trendradar）一次运行</text>
+  <g font-size="13" fill="#13161b">
+    <text x="608" y="268">① crawler/fetcher.py：逐个平台请求 newsnow 接口（失败重试 2 次）</text>
+    <text x="608" y="290">② storage/：写入当天 SQLite（output/news/日期.db），检测新增</text>
+    <text x="608" y="312">③ crawler/rss/：抓 RSS（feedparser 解析），写 output/rss/日期.db</text>
+    <text x="608" y="334">④ core/frequency + analyzer：关键词筛选与排序；或 ai/filter：AI 分类</text>
+    <text x="608" y="356">⑤ ai/analyzer、translator：AI 分析、翻译（经 LiteLLM，可选）</text>
+    <text x="608" y="378">⑥ report/：生成 HTML 报告　⑦ notification/：分批推送到各渠道</text>
+  </g>
+  <rect x="596" y="400" width="484" height="48" rx="6" fill="#fff" stroke="#9aa1ab"/>
+  <text x="608" y="420">MCP 服务进程（可选，默认关）：upstream/mcp_server</text>
+  <text x="608" y="440" font-size="12" fill="#4a505a">FastMCP，HTTP 只监听 127.0.0.1，读同一份数据目录；退出应用时停止</text>
+
+  <line x1="544" y1="226" x2="578" y2="226" stroke="#d9480f" stroke-width="2" marker-end="url(#ao)"/>
+  <text x="546" y="218" font-size="11" fill="#d9480f">启动</text>
+  <path d="M 578 300 L 556 300" stroke="#4a505a" stroke-width="2" marker-end="url(#a)" fill="none"/>
+  <text x="546" y="316" font-size="11" fill="#4a505a">日志</text>
+
+  <!-- 数据目录 -->
+  <rect x="24" y="494" width="620" height="244" rx="10" fill="#e3f4ea" stroke="#1a7f4b" stroke-width="1.5"/>
+  <text x="40" y="520" font-weight="700" fill="#1a7f4b">用户数据目录（macOS ~/Library/Application Support/HotRadar/，Windows %LOCALAPPDATA%\HotRadar\）</text>
+  <g font-size="13" fill="#13161b">
+    <text x="40" y="548">config/config.yaml ………… 上游原生配置（平台、RSS、报告、推送开关、AI 模型…）</text>
+    <text x="40" y="570">config/frequency_words.txt … 关键词　config/ai_interests.txt … AI 兴趣描述</text>
+    <text x="40" y="592">config/timeline.yaml、提示词 … 上游的推送时段规则与 AI 提示词</text>
+    <text x="40" y="614">secrets.json ………………… AI Key、Webhook、Token（不进 config.yaml，以环境变量交给上游）</text>
+    <text x="40" y="636">output/news|rss/日期.db … 上游 SQLite 历史　output/html/ … HTML 报告</text>
+    <text x="40" y="658">settings.json、runs.json、logs/ … 外壳设置、运行记录、每次运行的完整日志</text>
+    <text x="40" y="680">demo/ ………………………… 离线演示工作区（独立的 config/ 和 output/）</text>
+    <text x="40" y="702">hotradar.log、webview/ ……… 应用日志、窗口存储</text>
+  </g>
+  <text x="40" y="726" font-size="12" fill="#1a7f4b">安装目录只读，替换新版本不影响这里；卸载也保留这里</text>
+
+  <!-- 外部服务 -->
+  <rect x="676" y="494" width="420" height="244" rx="10" fill="#fff4dc" stroke="#8a5a00" stroke-width="1.5"/>
+  <text x="692" y="520" font-weight="700" fill="#8a5a00">外部服务（不是本机进程）</text>
+  <g font-size="13" fill="#13161b">
+    <text x="692" y="548">newsnow 热榜接口（第三方公开服务，默认</text>
+    <text x="692" y="568">　newsnow.busiyi.world，可换成自建）</text>
+    <text x="692" y="594">RSS 订阅源（Hacker News、雅虎财经…）</text>
+    <text x="692" y="620">大模型服务商（DeepSeek、OpenAI…，经 LiteLLM）</text>
+    <text x="692" y="646">推送渠道：飞书、钉钉、企业微信、Telegram、</text>
+    <text x="692" y="666">　邮件、ntfy、Bark、Slack、通用 Webhook</text>
+    <text x="692" y="692">cdnjs（报告里「保存为图片」按钮加载 html2canvas）</text>
+  </g>
+  <text x="692" y="722" font-size="12" fill="#8a5a00">只有工作进程访问外网；主进程只监听本机</text>
+  <line x1="838" y1="462" x2="838" y2="492" stroke="#8a5a00" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="420" y1="462" x2="420" y2="492" stroke="#1a7f4b" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="700" y1="462" x2="600" y2="492" stroke="#1a7f4b" stroke-width="2" marker-end="url(#a)"/>
+</svg>

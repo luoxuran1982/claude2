@@ -347,8 +347,8 @@
   // 推送渠道
   const CHANNELS = [
     { name: "飞书", help: "飞书群 → 设置 → 群机器人 → 添加机器人 → 自定义机器人，复制 Webhook 地址。", f: [{ s: "feishu_webhook_url" }] },
-    { name: "钉钉", help: "钉钉群 → 群设置 → 机器人 → 添加机器人 → 自定义；安全设置选「自定义关键词」时，填报告里一定会出现的词（见使用指南）。", f: [{ s: "dingtalk_webhook_url" }] },
-    { name: "企业微信", help: "企业微信群 → 群设置 → 群机器人 → 添加，复制 Webhook 地址；推送到个人微信时消息类型选 text。", f: [{ s: "wework_webhook_url" }, { k: "notification.channels.wework.msg_type", label: "消息类型" }] },
+    { name: "钉钉", help: "钉钉电脑版 → 群设置 → 机器人 → 添加机器人 → 自定义；安全设置选「自定义关键词」并填「热点」（推送标题里一定有这个词），复制 Webhook 地址。", f: [{ s: "dingtalk_webhook_url" }] },
+    { name: "企业微信", help: "企业微信群 → 右上角「…」→「消息推送」→「添加」，复制 Webhook 地址；推送到个人微信时消息类型选 text。", f: [{ s: "wework_webhook_url" }, { k: "notification.channels.wework.msg_type", label: "消息类型" }] },
     { name: "Telegram", help: "找 @BotFather 建机器人拿 Token；Chat ID 可从 @userinfobot 获取。", f: [{ s: "telegram_bot_token" }, { s: "telegram_chat_id" }] },
     { name: "邮件", help: "密码一般填邮箱的「授权码」，不是登录密码；SMTP 留空时按邮箱域名自动识别。", f: [{ s: "email_from" }, { s: "email_password" }, { s: "email_to" }, { k: "notification.channels.email.smtp_server", label: "SMTP 服务器（可空）" }, { k: "notification.channels.email.smtp_port", label: "SMTP 端口（可空）" }] },
     { name: "ntfy", help: "开源推送服务，可用公共的 ntfy.sh 或自建。", f: [{ k: "notification.channels.ntfy.server_url", label: "服务器地址" }, { s: "ntfy_topic" }, { s: "ntfy_token" }] },

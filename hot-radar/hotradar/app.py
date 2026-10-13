@@ -117,6 +117,8 @@ def main(argv=None) -> None:
     try:
         if args.serve_only:
             print(url, flush=True)
+            # 只在开发/测试用的 --serve-only 模式下把带令牌的地址写进数据目录，供自动化测试读取（无控制台的安装版拿不到 stdout）
+            configio.atomic_write(root / ".serve-only-url", url.encode("utf-8"))
             app.quit_event.wait()
         elif args.browser or not run_window(app, url, str(root / "webview")):
             run_browser(app, url)

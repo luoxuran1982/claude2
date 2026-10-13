@@ -18,7 +18,7 @@ from pathlib import Path
 from . import paths
 
 SHELL_GLOBS = (
-    "run.py", "requirements.txt", "start-mac.command", "start-windows.bat",
+    "run.py", "requirements.txt", "constraints.txt",
     "hotradar/*.py", "hotradar/web/*.html", "hotradar/web/*.js", "hotradar/web/*.css", "hotradar/web/*.svg",
     "packaging/*.py", "packaging/*.nsi", "tests/*.py", "tests/*.js", "tests/fixtures/*", "ci/*.yml",
 )
