@@ -4,8 +4,8 @@ on:
   push:
     branches: ["main", "claude/**"]
     tags: ["v*"]
-    # 只在 AI 知识视频工坊自己的文件变动时构建（其他项目和文档推送不触发）
-    paths: ["studio/**", "packaging/**", "tests/**", "run.py", "requirements.txt", "README.md", ".github/workflows/build.yml"]
+    # 只在 AI 知识视频工坊自己的文件变动时构建（docs/ 会打进安装包，所以文档改动也要重新构建）
+    paths: ["studio/**", "packaging/**", "tests/**", "docs/**", "run.py", "requirements.txt", "README.md", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 jobs:
@@ -29,7 +29,9 @@ jobs:
       - name: Test
         run: python -m unittest discover -s tests -v
       - name: Build
-        run: python packaging/build.py
+        run: python packaging/build.py   # 打包 README.md、docs/ 和手写源码，并自检
+      - name: Smoke test
+        run: python packaging/smoke.py   # 启动包里的程序，检查接口、文档、源码，退出后进程结束、端口关闭
       - uses: actions/upload-artifact@v4
         with:
           name: AIVideoStudio-${{ runner.os }}

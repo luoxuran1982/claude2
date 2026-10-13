@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 import urllib.request
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -315,6 +316,82 @@ class ServerTests(unittest.TestCase):
     def test_media_path_traversal_blocked(self):
         status, _ = self.call("GET", f"/media/library/..%2F..%2Fsettings.json?t={self.app.token}", token=False)
         self.assertEqual(status, 404)
+
+    def test_guide_docs_cover_all_markdown(self):
+        status, body = self.call("GET", "/api/guide/docs")
+        self.assertEqual(status, 200)
+        listed = {d["path"] for d in json.loads(body)["docs"]}
+        expected = {"README.md"} | {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md")}
+        self.assertEqual(listed, expected)
+        for must in ("docs/00 项目阅读入口.md", "docs/01 使用指南.md", "docs/02 软件框架与系统架构.md"):
+            self.assertIn(must, listed)
+        q = urllib.parse.quote("docs/01 使用指南.md")
+        status, body = self.call("GET", f"/api/guide/doc?path={q}")
+        self.assertEqual(status, 200)
+        text = json.loads(body)["text"]
+        for section in ("怎样开始和结束", "当前进程与内存", "怎样缩放界面", "出了问题怎么办"):
+            self.assertIn(section, text)
+        self.assertIn("author: Claude", (ROOT / "docs" / "00 项目阅读入口.md").read_text(encoding="utf-8"))
+        self.assertIn("project: AI 知识视频工坊", (ROOT / "docs" / "00 项目阅读入口.md").read_text(encoding="utf-8"))
+
+    def test_guide_sources_whitelist_and_zip(self):
+        status, body = self.call("GET", "/api/guide/sources")
+        files = {f["path"] for f in json.loads(body)["files"]}
+        for must in ("run.py", "studio/server.py", "studio/web/app.js", "studio/web/md.js", "packaging/build.py"):
+            self.assertIn(must, files)
+        self.assertFalse(any("__pycache__" in f or f.endswith(".pyc") for f in files))
+        status, body = self.call("GET", "/api/guide/source?path=studio/server.py")
+        self.assertEqual(json.loads(body)["text"], (ROOT / "studio" / "server.py").read_text(encoding="utf-8"))
+        for bad in ("../README.md", "studio/../run.py", "/etc/passwd", "studio/__pycache__/x.pyc", "docs/01 使用指南.md"):
+            status, _ = self.call("GET", "/api/guide/source?path=" + urllib.parse.quote(bad))
+            self.assertEqual(status, 404, bad)
+        status, _ = self.call("GET", "/api/guide/doc?path=" + urllib.parse.quote("../tests/test_studio.py"))
+        self.assertEqual(status, 404)
+        status, body = self.call("GET", "/api/guide/source.zip")
+        self.assertEqual(status, 200)
+        import io
+        import zipfile
+
+        names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+        self.assertTrue(any(n.endswith("/studio/server.py") for n in names))
+        self.assertTrue(any(n.endswith("/docs/01 使用指南.md") for n in names))
+
+    def test_process_status_lists_children(self):
+        from studio import procinfo
+        from studio.media import Runner
+
+        status, body = self.call("GET", "/api/status/processes")
+        snap = json.loads(body)
+        self.assertEqual(snap["processes"][0]["pid"], os.getpid())
+        self.assertIn("MiB", snap["unit"])
+        self.assertTrue(snap["backend"].startswith("无独立后台"))
+        # 子进程运行时出现在列表里，结束后消失
+        cmd = [sys.executable, "-c", "import time; time.sleep(1.5)"]
+        t = threading.Thread(target=lambda: Runner().run(cmd, timeout=10))
+        t.start()
+        time.sleep(0.6)
+        pids = [p["pid"] for p in json.loads(self.call("GET", "/api/status/processes")[1])["processes"]]
+        child = [p for p in procinfo.CHILDREN]
+        self.assertTrue(child and child[0] in pids)
+        t.join()
+        pids = [p["pid"] for p in json.loads(self.call("GET", "/api/status/processes")[1])["processes"]]
+        self.assertNotIn(child[0], pids)
+
+    def test_kill_children(self):
+        from studio import procinfo
+
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        procinfo.register(p, "测试子进程")
+        self.assertEqual(procinfo.kill_children(), 1)
+        self.assertIsNotNone(p.poll())
+
+    def test_ui_zoom_saved(self):
+        status, body = self.call("POST", "/api/ui", {"zoom": 115})
+        self.assertEqual(json.loads(body)["ui"]["zoom"], 115)
+        self.assertEqual(json.loads(self.call("GET", "/api/bootstrap")[1])["ui"]["zoom"], 115)
+        self.call("POST", "/api/ui", {"zoom": 133})  # 不在 11 档里的值被忽略
+        self.assertEqual(json.loads(self.call("GET", "/api/bootstrap")[1])["ui"]["zoom"], 115)
+        self.call("POST", "/api/ui", {"zoom": 100})
 
 
 def probe_duration(path):
