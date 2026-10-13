@@ -1,0 +1,55 @@
+name: obsidian-docs
+
+# 把所有 claude/ 分支里各项目的文档汇总到 obsidian 分支，用户 Mac 上的 Obsidian 只拉取这个分支。
+# 定时任务兜底：还没有这个工作流文件的旧分支，靠它每天汇总一次。
+on:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - "README.md"
+      - "**/README.md"
+      - "docs/**"
+      - "**/docs/**"
+      - "交付规范/**"
+      - ".github/obsidian/**"
+      - ".github/workflows/obsidian-docs.yml"
+  schedule:
+    - cron: "23 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: obsidian-docs
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Collect and push
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          W="$RUNNER_TEMP/obsidian"
+          if git rev-parse -q --verify refs/remotes/origin/obsidian >/dev/null; then
+            git worktree add -B obsidian "$W" origin/obsidian
+          else
+            git worktree add --orphan -b obsidian "$W"
+          fi
+          find "$W" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          python .github/obsidian/publish.py "$W"
+          cd "$W"
+          git add -A
+          if git diff --cached --quiet; then echo "文档没有变化"; exit 0; fi
+          git commit -q -m "同步文档（来自 ${GITHUB_REF_NAME} ${GITHUB_SHA::7}）"
+          git push origin obsidian
