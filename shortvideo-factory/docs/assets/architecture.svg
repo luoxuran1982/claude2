@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif" font-size="14">
+  <title>AI 短视频工厂 1.0.0 系统架构</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#475467"/></marker>
+  </defs>
+  <rect width="1000" height="640" fill="#ffffff"/>
+  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.0：进程与数据流</text>
+
+  <!-- 启动器 -->
+  <rect x="30" y="55" width="420" height="300" rx="12" fill="#eef2ff" stroke="#1f3a8a" stroke-width="2"/>
+  <text x="45" y="80" font-weight="bold" fill="#1f3a8a">启动器进程 ShortVideoFactory（外壳，PyInstaller）</text>
+  <rect x="50" y="95" width="380" height="70" rx="8" fill="#fff" stroke="#98a2b3"/>
+  <text x="65" y="118" font-weight="bold">窗口（pywebview）</text>
+  <text x="65" y="140" fill="#475467">Windows：WebView2　macOS：WKWebView</text>
+  <text x="65" y="158" fill="#475467">显示 http://127.0.0.1:端口A/</text>
+  <rect x="50" y="180" width="380" height="160" rx="8" fill="#fff" stroke="#98a2b3"/>
+  <text x="65" y="203" font-weight="bold">本机服务（tornado，127.0.0.1:端口A）</text>
+  <text x="65" y="226" fill="#475467">/            外壳页面：顶栏、缩放、使用指南、运行状态</text>
+  <text x="65" y="248" fill="#475467">/api/*       状态、进程与内存、文档与源码、退出、打开文件夹</text>
+  <text x="65" y="270" fill="#475467">/app/*       反向代理 HTTP（含视频 Range）</text>
+  <text x="65" y="292" fill="#475467">/app/_stcore/stream  反向代理 WebSocket</text>
+  <text x="65" y="314" fill="#475467">首页 HTML 插入 /ui/inject.js（中文化 + 缩放）</text>
+  <text x="65" y="332" fill="#475467">supervisor：启停后台、作业对象、run.json</text>
+
+  <!-- 后台 -->
+  <rect x="540" y="55" width="430" height="300" rx="12" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="555" y="80" font-weight="bold" fill="#c2410c">生成界面后台（子进程，随包 Python 3.11）</text>
+  <rect x="560" y="95" width="390" height="120" rx="8" fill="#fff" stroke="#98a2b3"/>
+  <text x="575" y="118" font-weight="bold">Streamlit 1.59（127.0.0.1:端口B，/app/）</text>
+  <text x="575" y="140" fill="#475467">webui/Main.py：MoneyPrinterTurbo 界面</text>
+  <text x="575" y="162" fill="#475467">app/services/task.py：流水线</text>
+  <text x="575" y="184" fill="#475467">文案 → 关键词 → 配音 → 字幕 → 素材 → 合成</text>
+  <text x="575" y="206" fill="#475467">svf_child.py 看门狗：启动器不在就自行结束</text>
+  <rect x="560" y="230" width="185" height="110" rx="8" fill="#fff" stroke="#98a2b3"/>
+  <text x="575" y="253" font-weight="bold">FFmpeg 子进程</text>
+  <text x="575" y="275" fill="#475467">MoviePy 剪辑拼接</text>
+  <text x="575" y="297" fill="#475467">字幕叠加、编码 MP4</text>
+  <text x="575" y="319" fill="#475467">只在生成时存在</text>
+  <rect x="765" y="230" width="185" height="110" rx="8" fill="#fff" stroke="#98a2b3"/>
+  <text x="780" y="253" font-weight="bold">线程内网络调用</text>
+  <text x="780" y="275" fill="#475467">openai / litellm 等</text>
+  <text x="780" y="297" fill="#475467">edge-tts</text>
+  <text x="780" y="319" fill="#475467">requests（素材下载）</text>
+
+  <line x1="450" y1="270" x2="560" y2="160" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
+  <text x="455" y="205" fill="#475467">HTTP + WebSocket</text>
+  <line x1="450" y1="330" x2="540" y2="330" stroke="#475467" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a)"/>
+  <text x="455" y="350" fill="#475467">启动 / 停止</text>
+  <line x1="240" y1="165" x2="240" y2="180" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 外部服务 -->
+  <rect x="540" y="390" width="430" height="120" rx="12" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
+  <text x="555" y="415" font-weight="bold" fill="#15803d">云端服务（网络，不在本机运行）</text>
+  <text x="555" y="440" fill="#344054">大模型 API：写文案 1 次 + 生成英文搜索词 1 次</text>
+  <text x="555" y="462" fill="#344054">Pexels / Pixabay / Coverr：按关键词搜索并下载视频片段</text>
+  <text x="555" y="484" fill="#344054">Edge TTS：中文配音 + 逐词时间戳（字幕）</text>
+  <text x="555" y="502" fill="#344054">（可选）付费 AI 视频 / 生图、Upload-Post 自动发布</text>
+  <line x1="855" y1="340" x2="855" y2="390" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 数据目录 -->
+  <rect x="30" y="390" width="470" height="220" rx="12" fill="#f8fafc" stroke="#475467" stroke-width="2"/>
+  <text x="45" y="415" font-weight="bold" fill="#1d2433">用户数据目录（不在安装目录，卸载保留）</text>
+  <text x="45" y="440" fill="#475467">macOS ~/Library/Application Support/ShortVideoFactory/</text>
+  <text x="45" y="460" fill="#475467">Windows %LOCALAPPDATA%\ShortVideoFactory\</text>
+  <text x="45" y="488" fill="#344054">config.toml  设置与 API Key（MPT_CONFIG_FILE）</text>
+  <text x="45" y="510" fill="#344054">storage/tasks/  成片、配音、字幕（MPT_STORAGE_DIR）</text>
+  <text x="45" y="532" fill="#344054">fonts/  songs/  字体与背景音乐（MPT_FONT_DIR / MPT_SONG_DIR）</text>
+  <text x="45" y="554" fill="#344054">logs/launcher.log  logs/webui.log</text>
+  <text x="45" y="576" fill="#344054">shell.json 缩放档位　run.json 运行记录（退出时删除）</text>
+  <line x1="660" y1="355" x2="420" y2="390" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
+  <text x="560" y="380" fill="#475467">读写</text>
+  <text x="560" y="600" fill="#475467" font-size="12">安装包内（只读）：payload/runtime 随包 Python、payload/upstream 上游源码、</text>
+  <text x="560" y="618" fill="#475467" font-size="12">payload/fonts 开源字体、payload/project 文档与源码</text>
+</svg>
