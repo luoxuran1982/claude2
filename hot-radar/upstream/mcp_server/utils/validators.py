@@ -175,6 +175,8 @@ def get_supported_platforms() -> List[str]:
             _platforms_config_path = os.path.normpath(
                 os.path.join(current_dir, "..", "..", "config", "config.yaml")
             )
+            if os.path.isfile(os.path.join("config", "config.yaml")):  # 热点雷达补丁：优先用当前工作目录（用户数据目录）的配置
+                _platforms_config_path = os.path.abspath(os.path.join("config", "config.yaml"))
 
         current_mtime = os.path.getmtime(_platforms_config_path)
 

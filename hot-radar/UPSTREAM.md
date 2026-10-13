@@ -43,6 +43,12 @@
 | --- | --- | --- | --- |
 | 1 | `upstream/trendradar/core/frequency.py` 第 62 行 | 正则无效时的提示 `Warning: Invalid regex pattern '/…/': …` 改为中文「警告：正则表达式无效 '/…/'，已按普通关键词处理：…」 | 关键词写错正则时这句话会显示在应用的抓取日志和关键词检查结果里，界面要求全中文 |
 | 2 | `upstream/trendradar/report/generator.py` 第 222 行 | 报告渲染函数缺失时的兜底页面标题 `Report` 改为「报告」，并加上 `<meta charset="utf-8">` | 兜底页面会出现在「最新报告」里；不声明编码时中文可能乱码 |
+| 3 | `upstream/trendradar/ai/prompt_loader.py` 第 13 行 | 提示词目录：当前工作目录下有 `config/config.yaml` 时用 `./config/`，否则仍用程序文件旁边的 `config/` | 上游原本按「程序文件所在目录的上一级 config/」读提示词，在它自己的部署方式（源码目录/Docker）里与当前目录是同一处；桌面版的配置在用户数据目录，程序在只读的安装目录，不改的话 AI 提示词会读安装包里的那份 |
+| 4 | `upstream/trendradar/ai/filter.py` 第 88 行 | 同上，AI 筛选的兴趣描述文件 `ai_interests.txt` 优先从当前工作目录的 `config/` 读 | 不改的话，用户在应用「配置 → 关键词与筛选」里改的 AI 兴趣描述不会生效 |
+| 5 | `upstream/mcp_server/tools/analytics.py` 第 60–61 行（新增 2 行） | MCP 读取排序权重配置时，当前工作目录有 `config/config.yaml` 就用它 | MCP 服务进程的工作目录是用户数据目录，原写法会读到安装包里的默认配置 |
+| 6 | `upstream/mcp_server/utils/validators.py` 第 178–179 行（新增 2 行） | MCP 校验平台 ID 时同上 | 同上：否则用户新增的平台在 MCP 查询里会被当成无效平台 |
+
+补丁 3–6 对上游自己的用法没有影响：上游在源码目录或 Docker 里运行时，当前目录的 `config/` 就是程序旁边的那个。
 
 ## 运行时替换（不改上游文件）
 

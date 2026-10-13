@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Tuple
 
 # 项目 config 根目录
-_CONFIG_ROOT = Path(__file__).parent.parent.parent / "config"
+_CONFIG_ROOT = Path("config") if Path("config", "config.yaml").is_file() else Path(__file__).parent.parent.parent / "config"  # 热点雷达补丁：优先用当前工作目录（用户数据目录）的 config/
 
 
 def load_prompt_template(

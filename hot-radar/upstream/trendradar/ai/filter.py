@@ -85,7 +85,7 @@ class AIFilter:
         注意：调用方（context.py）已完成 config/timeline 的合并决策，
         此处不再二次读取 filter_config，避免语义冲突。
         """
-        config_dir = Path(__file__).parent.parent.parent / "config"
+        config_dir = Path("config") if Path("config", "config.yaml").is_file() else Path(__file__).parent.parent.parent / "config"  # 热点雷达补丁：优先用当前工作目录（用户数据目录）的 config/
         configured_file = interests_file
 
         if configured_file:
