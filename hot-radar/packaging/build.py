@@ -143,6 +143,9 @@ def finish_windows(folder: Path, icon_dir: Path) -> None:
     print("免安装版：", portable.with_suffix(".zip"))
     makensis = find_makensis()
     if not makensis:
+        if os.environ.get("CI"):
+            # CI 上必须出安装程序，不能悄悄只出免安装版
+            raise SystemExit("没有找到 NSIS（makensis），无法生成安装程序")
         print("没有找到 NSIS（makensis），跳过安装程序。安装：choco install nsis")
         return
     out = DIST / f"{NAME}-Setup-{__version__}-x64.exe"
