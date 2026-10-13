@@ -632,9 +632,23 @@ def make_handler(app):
     return Handler
 
 
+class LocalHTTPServer(ThreadingHTTPServer):
+    """HTTPServer.server_bind 会调用 socket.getfqdn() 做反向域名解析，
+    在部分 Mac（和 CI 机器）上要卡几十秒。只监听 127.0.0.1，用不着解析。"""
+
+    daemon_threads = True
+
+    def server_bind(self):
+        import socketserver
+
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
+
+
 def serve(port=0):
     app = App()
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+    httpd = LocalHTTPServer(("127.0.0.1", port), make_handler(app))
     httpd.daemon_threads = True
     app.shutdown_cb = httpd.shutdown
     return app, httpd

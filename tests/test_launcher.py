@@ -6,6 +6,7 @@
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -69,14 +70,32 @@ class LauncherTests(unittest.TestCase):
         port = free_port()
         env = dict(os.environ, PYTHONPATH=str(tmp / "fake"), STUDIO_DATA_DIR=str(tmp / "data"),
                    STUDIO_URL_FILE=str(tmp / "url.txt"), BROWSER="true" if os.name != "nt" else "")
-        proc = subprocess.Popen([sys.executable, str(ROOT / "run.py"), "--port", str(port)], env=env,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.out = open(tmp / "out.txt", "wb")
+        proc = subprocess.Popen([sys.executable, "-X", "faulthandler", str(ROOT / "run.py"), "--port", str(port)], env=env,
+                                stdout=self.out, stderr=subprocess.STDOUT)
+        self.addCleanup(self.cleanup, proc, tmp)
         return proc, port, tmp
+
+    def cleanup(self, proc, tmp):
+        hung = proc.poll() is None
+        if hung:
+            # 卡住时让 faulthandler 打印各线程的调用栈，方便在 CI 日志里定位
+            if os.name != "nt":
+                proc.send_signal(signal.SIGABRT)
+                time.sleep(1)
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(10)
+        self.out.close()
+        if hung or proc.returncode != 0:
+            print("\n---- run.py 输出 ----\n" + (tmp / "out.txt").read_text(encoding="utf-8", errors="replace"))
+            log = tmp / "data" / "studio.log"
+            if log.is_file():
+                print("---- studio.log ----\n" + log.read_text(encoding="utf-8", errors="replace"))
 
     def test_window_close_exits(self):
         proc, port, tmp = self.launch(FAKE_CLOSE)
-        proc.wait(30)
+        proc.wait(60)
         self.assertEqual(proc.returncode, 0)
         self.assertFalse(port_open(port))
         log = (tmp / "data" / "studio.log").read_text(encoding="utf-8")
@@ -85,7 +104,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_window_failure_falls_back_and_quit(self):
         proc, port, tmp = self.launch(FAKE_FAIL)
-        for _ in range(100):
+        for _ in range(600):
             if (tmp / "url.txt").exists() and "窗口启动失败" in (tmp / "data" / "studio.log").read_text(encoding="utf-8", errors="replace"):
                 break
             time.sleep(0.1)
@@ -95,7 +114,7 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(json.loads(r.read())["mode"], "browser")
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/shutdown", method="POST", headers={"X-Studio-Token": token})
         urllib.request.urlopen(req, timeout=10).read()
-        proc.wait(30)
+        proc.wait(60)
         self.assertFalse(port_open(port))
         log = (tmp / "data" / "studio.log").read_text(encoding="utf-8")
         self.assertIn("窗口启动失败，改用浏览器", log)
