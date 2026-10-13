@@ -1,4 +1,4 @@
-name: build
+name: AI 知识视频工坊
 
 on:
   push:
