@@ -17,7 +17,8 @@
     <a data-page="results">📈 实验结果</a>
     <a data-page="compare">⚖️ 实验对比</a>
     <a data-page="picks">🎯 最新选股</a>
-    <a data-page="help">❓ 使用说明</a>
+    <a data-page="status">🖥️ 运行状态</a>
+    <a data-page="help">📖 使用指南</a>
   </nav>
   <div class="side-foot">
     <div id="ds-current" class="muted"></div>
@@ -25,6 +26,20 @@
     <div id="version" class="muted"></div>
   </div>
 </aside>
+<div id="shell">
+<header id="topbar">
+  <div class="tb-left"><b>QuantLab 量化学习实验室</b> <span id="tb-version" class="muted"></span></div>
+  <div class="tb-right">
+    <button id="tb-guide" class="ghost sm" title="打开使用指南">📖 使用指南</button>
+    <button id="tb-status" class="ghost sm" title="查看本应用的进程和内存">🖥️ <span id="tb-mem">运行状态</span></button>
+    <div class="zoom" role="group" aria-label="界面缩放">
+      <button id="zoom-out" class="zbtn" title="缩小一档（−5%）" aria-label="缩小">−</button>
+      <select id="zoom-sel" title="选择界面缩放比例" aria-label="缩放比例"></select>
+      <button id="zoom-in" class="zbtn" title="放大一档（＋5%）" aria-label="放大">＋</button>
+      <button id="zoom-reset" class="zbtn reset" title="恢复到 100%">恢复 100%</button>
+    </div>
+  </div>
+</header>
 <main>
   <div id="jobbar" hidden>
     <div class="job-title"><span id="job-title"></span> <span id="job-msg" class="muted"></span></div>
@@ -234,10 +249,41 @@
     </div>
   </section>
 
-  <!-- 帮助 -->
+  <!-- 运行状态 -->
+  <section id="page-status" class="page">
+    <h1>运行状态 <small class="muted">本应用当前的进程与内存，每 3 秒刷新</small></h1>
+    <div class="card">
+      <div class="row between"><h2>本应用进程</h2><span class="muted" id="ps-sampled"></span></div>
+      <table class="tbl" id="ps-table"><thead><tr><th>职责</th><th>进程名</th><th class="num">PID</th><th class="num">内存（MiB）</th><th class="num">线程数</th></tr></thead><tbody></tbody></table>
+      <p id="ps-total" class="hint"></p>
+      <p id="ps-backend" class="warn"></p>
+      <p id="ps-job" class="hint"></p>
+      <div class="hint" id="ps-notes"></div>
+    </div>
+    <div class="card"><h2>应用外部的独立依赖</h2><p class="muted" id="ps-external">无（不计入本应用合计）</p></div>
+  </section>
+
+  <!-- 使用指南 -->
   <section id="page-help" class="page">
-    <h1>使用说明</h1>
-    <div class="card prose">
+    <h1>使用指南 <small class="muted">本项目全部文档和手写源码，离线可读</small></h1>
+    <div class="guide">
+      <aside class="guide-nav card">
+        <div class="gn-title">快速上手</div>
+        <a data-g="quick">四步上手与指标速查</a>
+        <div class="gn-title">文档 <small class="muted" id="gn-doc-count"></small></div>
+        <div id="gn-docs"></div>
+        <div class="gn-title">附件 <small class="muted" id="gn-asset-count"></small></div>
+        <div id="gn-assets"></div>
+        <div class="gn-title">源码 <small class="muted" id="gn-src-count"></small></div>
+        <button id="src-download" class="sm">下载全部源码（zip）</button>
+        <input id="gn-src-q" class="sm-input" placeholder="筛选文件名">
+        <div id="gn-srcs"></div>
+      </aside>
+      <article class="guide-body card">
+        <div id="guide-head" class="row between"></div>
+        <div id="guide-meta"></div>
+        <div id="guide-doc" class="prose md"></div>
+<div class="prose" id="guide-quick" hidden>
       <h2>四步上手</h2>
       <ol>
         <li><b>数据中心</b>：导入通达信 <code>vipdoc</code> 文件夹（或 CSV 文件夹），或先生成演示数据。</li>
@@ -264,10 +310,15 @@
         <li>不要反复在同一段数据上调参后只看最好的结果——那是过拟合。用“结束日期”留一段最近的数据最后再验证。</li>
       </ul>
     </div>
+        <div id="guide-src" hidden><div class="src-bar" id="src-info"></div><pre class="src" id="src-code"></pre></div>
+      </article>
+    </div>
   </section>
 </main>
+</div>
 <div id="toast"></div>
 <script src="vendor/echarts.min.js"></script>
+<script src="markdown.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

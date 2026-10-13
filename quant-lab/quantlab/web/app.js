@@ -50,8 +50,11 @@ function modal(title, html, onOk) {
 }
 
 /* ------------------------------------------------------------------ 导航 */
-const LOADERS = { data: loadDataPage, factors: loadFactorsPage, new: loadNewPage, results: loadResultsPage, compare: loadComparePage, picks: loadPicksPage };
+const LOADERS = { data: loadDataPage, factors: loadFactorsPage, new: loadNewPage, results: loadResultsPage, compare: loadComparePage, picks: loadPicksPage,
+  status: loadStatusPage, help: loadGuidePage };
 function go(page) {
+  S.page = page;
+  try { localStorage.setItem('ql.page', page); } catch (e) { /* */ }
   $$('nav a').forEach((a) => a.classList.toggle('on', a.dataset.page === page));
   $$('.page').forEach((p) => p.classList.toggle('on', p.id === 'page-' + page));
   if (LOADERS[page]) LOADERS[page]();
@@ -62,6 +65,7 @@ $$('nav a').forEach((a) => (a.onclick = () => go(a.dataset.page)));
 async function refreshStatus() {
   S.status = await api('/api/status');
   $('#version').textContent = 'v' + S.status.version;
+  $('#tb-version').textContent = 'v' + S.status.version;
   const list = S.status.datasets;
   if (!list.find((d) => d.id === S.ds)) setDs(list[0] ? list[0].id : '');
   else setDs(S.ds);
@@ -679,11 +683,194 @@ async function drawPicks() {
   $$('#pk-table [data-k]').forEach((b) => (b.onclick = () => detail && openKline(detail.dataset, b.dataset.k, id)));
 }
 
+/* ------------------------------------------------------------------ 界面缩放：70%–120%，每 5% 一档 */
+const ZOOMS = [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120];
+function readZoom() {
+  let v = 100;
+  try { v = parseInt(localStorage.getItem('ql.zoom'), 10); } catch (e) { /* */ }
+  return ZOOMS.includes(v) ? v : 100;
+}
+function setZoom(v, save = true) {
+  if (!ZOOMS.includes(v)) v = 100;
+  S.zoom = v;
+  document.documentElement.style.zoom = v / 100;
+  $('#zoom-sel').value = String(v);
+  $('#zoom-out').disabled = v <= ZOOMS[0];
+  $('#zoom-in').disabled = v >= ZOOMS[ZOOMS.length - 1];
+  $('#zoom-reset').disabled = v === 100;
+  if (save) { try { localStorage.setItem('ql.zoom', String(v)); } catch (e) { /* */ } }
+  requestAnimationFrame(() => Object.values(S.charts).forEach((c) => { try { c.resize(); } catch (e) { /* */ } }));
+}
+$('#zoom-sel').innerHTML = ZOOMS.map((z) => `<option value="${z}">${z}%</option>`).join('');
+$('#zoom-sel').onchange = (e) => setZoom(parseInt(e.target.value, 10));
+$('#zoom-out').onclick = () => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(S.zoom) - 1)]);
+$('#zoom-in').onclick = () => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(S.zoom) + 1)]);
+$('#zoom-reset').onclick = () => setZoom(100);
+setZoom(readZoom(), false);
+$('#tb-guide').onclick = () => go('help');
+$('#tb-status').onclick = () => go('status');
+
+/* ------------------------------------------------------------------ 运行状态：进程与内存 */
+const mib = (v) => (v == null ? '暂不可用' : Number(v).toFixed(1));
+async function loadStatusPage() {
+  let r;
+  try { r = await api('/api/processes'); } catch (e) {
+    $('#ps-table tbody').innerHTML = '<tr><td colspan="5">暂不可用（' + esc(e.message) + '）</td></tr>';
+    $('#tb-mem').textContent = '运行状态';
+    return;
+  }
+  $('#ps-sampled').textContent = '采样时间 ' + r.sampled_at + ' · 口径：' + r.metric + ' · 单位 ' + r.unit + ' · 数据源 ' + r.source;
+  $('#ps-table tbody').innerHTML = r.processes.map((p) => `<tr><td>${esc(p.role)}</td><td>${esc(p.name || '—')}</td>
+    <td class="num" data-pid="${p.pid}">${p.pid}</td><td class="num">${mib(p.mem_mib)}</td><td class="num">${p.threads ?? '—'}</td></tr>`).join('');
+  $('#ps-total').textContent = r.total_mib == null ? '合计：暂不可用' :
+    `合计 ${r.total_mib.toFixed(1)} MiB（${r.processes.length} 个进程的内存直接相加，进程间共享的内存可能被重复计算）`;
+  $('#ps-backend').textContent = r.backend + '。运行方式：' + (r.mode || '—') + '。';
+  const st = { running: '运行中', done: '已完成', error: '失败', cancelled: '已取消' };
+  $('#ps-job').textContent = r.job ? `当前/最近任务：${r.job.title}（${st[r.job.status] || r.job.status}）——任务在主进程的线程里运行，不会多出 PID；若任务启动了子进程，会出现在上表里。` : '当前没有计算任务。';
+  $('#ps-notes').innerHTML = `口径：macOS 为常驻内存 RSS，Windows 为工作集（Working Set），1 MiB = 1024² 字节。Windows「任务管理器」默认显示的是“专用工作集”，通常比这里小。
+    同一进程里的线程共享 PID，线程数不是进程数。macOS 的网页内容进程（WebKit WebContent）由系统托管、不是本应用的子进程，这里列不出来（未实现）。`;
+  $('#ps-external').textContent = r.external && r.external.length ? r.external.map((x) => x.name).join('、') : '无（本应用不依赖外部常驻服务；不计入本应用合计）';
+  $('#tb-mem').textContent = r.total_mib != null ? `运行状态 ${r.total_mib.toFixed(0)} MiB` : '运行状态';
+}
+setInterval(() => { if (S.page === 'status') loadStatusPage(); }, 3000);
+
+/* ------------------------------------------------------------------ 使用指南：文档 + 附件 + 源码 */
+const G = { docs: [], assets: [], srcs: [], cur: null };
+function normPath(base, rel) {
+  const parts = (base ? base.split('/').slice(0, -1) : []);
+  rel.split('/').forEach((x) => { if (x === '..') parts.pop(); else if (x && x !== '.') parts.push(x); });
+  return parts.join('/');
+}
+const anchorId = (t) => 'h-' + t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
+async function loadGuidePage() {
+  if (!G.docs.length) {
+    try {
+      const [d, s] = await Promise.all([api('/api/docs'), api('/api/sources')]);
+      G.docs = d.docs; G.assets = d.assets; G.srcs = s.files;
+    } catch (e) { toast('读取使用指南失败：' + e.message, true); return; }
+    $('#gn-doc-count').textContent = `（${G.docs.length} 篇）`;
+    $('#gn-docs').innerHTML = G.docs.map((d) => `<a data-g="doc" data-path="${esc(d.path)}">${esc(d.title)}</a>`).join('');
+    $('#gn-asset-count').textContent = `（${G.assets.length} 个）`;
+    $('#gn-assets').innerHTML = G.assets.length ? G.assets.map((a) => `<a data-g="asset" data-path="${esc(a.path)}">${esc(a.path.split('/').pop())} <small>${(a.size / 1024).toFixed(0)} KB</small></a>`).join('') : '<span class="muted" style="font-size:12px;padding:0 8px">暂无</span>';
+    $('#gn-src-count').textContent = `（${G.srcs.length} 个文件，${G.srcs.reduce((a, f) => a + f.lines, 0)} 行）`;
+    drawSrcList();
+    $('#gn-src-q').oninput = drawSrcList;
+    $('#src-download').onclick = downloadSource;
+    $('.guide-nav').addEventListener('click', (e) => {
+      const a = e.target.closest('a[data-g]');
+      if (!a) return;
+      if (a.dataset.g === 'quick') showQuick();
+      else if (a.dataset.g === 'doc') openDoc(a.dataset.path);
+      else if (a.dataset.g === 'src') openSource(a.dataset.path);
+      else if (a.dataset.g === 'asset') window.open('/api/doc-asset?path=' + encodeURIComponent(a.dataset.path), '_blank');
+    });
+    $('#guide-doc').addEventListener('click', (e) => {
+      const a = e.target.closest('a');
+      if (!a) return;
+      if (a.dataset.doc) { e.preventDefault(); openDoc(a.dataset.doc, a.dataset.hash); }
+      else if (a.dataset.src) { e.preventDefault(); openSource(a.dataset.src); }
+      else if (a.dataset.anchor) { e.preventDefault(); const t = document.getElementById(a.dataset.anchor); if (t) t.scrollIntoView(); }
+      else if (a.getAttribute('href') === '#') e.preventDefault();
+    });
+  }
+  if (!G.cur) {
+    let last = null;
+    try { last = JSON.parse(localStorage.getItem('ql.guide') || 'null'); } catch (e) { /* */ }
+    if (last && last.kind === 'src' && G.srcs.find((f) => f.path === last.path)) openSource(last.path);
+    else if (last && last.kind === 'doc' && G.docs.find((d) => d.path === last.path)) openDoc(last.path);
+    else if (last && last.kind === 'quick') showQuick();
+    else if (G.docs.length) openDoc(G.docs[0].path);
+    else showQuick();
+  }
+}
+function drawSrcList() {
+  const q = ($('#gn-src-q').value || '').toLowerCase();
+  $('#gn-srcs').innerHTML = G.srcs.filter((f) => f.path.toLowerCase().includes(q))
+    .map((f) => `<a data-g="src" data-path="${esc(f.path)}" title="${esc(f.lang)}，${f.lines} 行">${esc(f.path)} <small>${f.lines}</small></a>`).join('');
+  markGuide();
+}
+function markGuide() {
+  $$('.guide-nav a[data-g]').forEach((a) => a.classList.toggle('on', !!G.cur && a.dataset.g === G.cur.kind && (a.dataset.path || '') === (G.cur.path || '')));
+}
+function guideShow(which) {
+  $('#guide-doc').hidden = which !== 'doc'; $('#guide-quick').hidden = which !== 'quick'; $('#guide-src').hidden = which !== 'src';
+  $('#guide-meta').hidden = which !== 'doc';
+}
+function rememberGuide() { try { localStorage.setItem('ql.guide', JSON.stringify(G.cur)); } catch (e) { /* */ } }
+function showQuick() {
+  G.cur = { kind: 'quick', path: '' }; rememberGuide(); markGuide(); guideShow('quick');
+  $('#guide-head').innerHTML = '<h2 style="margin:0">四步上手与指标速查</h2>';
+}
+async function openDoc(path, hash) {
+  let d;
+  try { d = await api('/api/doc?path=' + encodeURIComponent(path)); } catch (e) { toast(e.message, true); return; }
+  G.cur = { kind: 'doc', path }; rememberGuide(); markGuide(); guideShow('doc');
+  const docPaths = new Set(G.docs.map((x) => x.path)); const srcPaths = new Set(G.srcs.map((x) => x.path));
+  const dec = (u) => { try { return decodeURI(u); } catch (e) { return u; } };
+  const r = Markdown.render(d.text, {
+    image: (u) => (/^(https?:|data:)/.test(u) ? u : '/api/doc-asset?path=' + encodeURIComponent(normPath(path, dec(u)))),
+    link: (u) => {
+      if (/^(https?:|mailto:)/.test(u)) return { href: u, target: '_blank' };
+      if (u.startsWith('#')) return { href: u, anchor: anchorId(dec(u.slice(1))) };
+      const [p0, h] = u.split('#'); const target = normPath(path, dec(p0));
+      if (docPaths.has(target)) return { href: '#', doc: target, hash: h || '' };
+      const srcTarget = target.replace(/^quant-lab\//, '');
+      if (srcPaths.has(srcTarget)) return { href: '#', src: srcTarget };
+      if (G.assets.find((a) => a.path === target)) return { href: '/api/doc-asset?path=' + encodeURIComponent(target), target: '_blank' };
+      return { href: '#', title: '应用内没有这个文件：' + target };
+    },
+  });
+  const title = (G.docs.find((x) => x.path === path) || {}).title || path;
+  $('#guide-head').innerHTML = `<h2 style="margin:0">${esc(title)}</h2><span class="muted" style="font-size:12px">${esc(path)}</span>`;
+  $('#guide-meta').innerHTML = r.meta && r.meta.length ? '<div class="meta">' + r.meta.map(([k, v]) => `<span><b>${esc(k)}</b>：${esc(v)}</span>`).join('') + '</div>' : '';
+  $('#guide-doc').innerHTML = r.html;
+  $('main').scrollTop = 0;
+  if (hash) { const t = document.getElementById(anchorId(dec(hash))); if (t) t.scrollIntoView(); }
+}
+const KW = /\b(def|class|return|import|from|as|if|elif|else|for|while|in|not|and|or|is|None|True|False|try|except|finally|with|raise|yield|lambda|pass|break|continue|global|async|await|const|let|var|function|new|this|typeof|of|null|undefined|true|false|throw|catch|export)\b/g;
+function highlight(line, lang) {
+  if (!['Python', 'JavaScript'].includes(lang)) return esc(line);
+  const cm = lang === 'Python' ? '#' : '//';
+  let code = line, comment = '', q = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+    if (c === '"' || c === "'" || c === '`') q = c;
+    else if (line.startsWith(cm, i)) { code = line.slice(0, i); comment = line.slice(i); break; }
+  }
+  const parts = code.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/);
+  const html = parts.map((p, k) => (k % 2 ? `<span class="tok-s">${esc(p)}</span>`
+    : esc(p).replace(KW, '<span class="tok-k">$1</span>').replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-n">$1</span>'))).join('');
+  return html + (comment ? `<span class="tok-c">${esc(comment)}</span>` : '');
+}
+async function openSource(path) {
+  let f;
+  try { f = await api('/api/source?path=' + encodeURIComponent(path)); } catch (e) { toast(e.message, true); return; }
+  G.cur = { kind: 'src', path }; rememberGuide(); markGuide(); guideShow('src');
+  $('#guide-head').innerHTML = `<h2 style="margin:0">${esc(path)}</h2><span class="muted" style="font-size:12px">只读 · ${esc(f.lang)} · ${f.lines} 行 · ${(f.size / 1024).toFixed(1)} KB</span>`;
+  $('#src-info').textContent = '完整内容（只读）。要修改请在源码目录里改，再按《02 软件框架与系统架构》里的方法重新打包。';
+  const lines = f.text.replace(/\n$/, '').split('\n');
+  $('#src-code').innerHTML = lines.map((l) => `<span class="ln">${highlight(l, f.lang) || ' '}</span>`).join('');
+  $('main').scrollTop = 0;
+}
+async function downloadSource() {
+  try {
+    const r = await api('/api/save-source', {});
+    if (r.saved) { toast('已保存：' + r.saved); return; }
+    if (r.cancelled) return;
+  } catch (e) { /* 浏览器模式下直接下载 */ }
+  const a = document.createElement('a'); a.href = '/api/source.zip'; a.download = ''; document.body.appendChild(a); a.click(); a.remove();
+}
+
 /* ------------------------------------------------------------------ 启动 */
 (async function init() {
   try {
     S.catalog = await api('/api/catalog');
-    await loadDataPage();
+    let page = 'data';
+    try { page = localStorage.getItem('ql.page') || 'data'; } catch (e) { /* */ }
+    if (!$('#page-' + page)) page = 'data';
+    if (page !== 'data') { await refreshStatus(); go(page); } else { S.page = 'data'; await loadDataPage(); }
+    if (S.page !== 'status') loadStatusPage().catch(() => {});
   } catch (e) { toast('初始化失败：' + e.message, true, 10000); }
   setInterval(() => api('/api/heartbeat', {}).catch(() => {}), 60000);
 })();
