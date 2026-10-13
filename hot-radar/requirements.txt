@@ -1,0 +1,16 @@
+# 上游 TrendRadar v6.11.0 的运行依赖（版本与 upstream/pyproject.toml 一致）
+requests==2.33.0
+pytz==2026.1
+PyYAML==6.0.3
+fastmcp==2.12.5        # MCP 服务（可选功能）
+websockets==13.1
+feedparser==6.0.12     # RSS 解析
+litellm==1.82.6        # AI 分析/翻译/筛选（上游在 import 时就加载）
+json-repair==0.58.6
+tenacity==8.5.0
+# 上游的 boto3（远程 S3 存储）不装：桌面版只用本地存储，上游在缺少 boto3 时自动跳过远程存储
+
+# 热点雷达外壳
+ruamel.yaml>=0.18      # 改 config.yaml 时保留注释和格式
+pywebview>=5.0         # 独立窗口；装不上时自动改用浏览器打开
+psutil>=5.9            # 运行状态页（PID/内存）、工作进程的主进程看门狗

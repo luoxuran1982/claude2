@@ -20,23 +20,32 @@ def frozen() -> bool:
 
 
 def bundle_root() -> Path:
-    """只读资源的根目录：源码运行时是 hot-radar/，安装包里是 PyInstaller 解包目录。"""
+    """源码运行时是 hot-radar/；安装包里是 PyInstaller 解包目录（_internal/ 或 .app/Contents/Frameworks 等）。"""
     if frozen():
         return Path(sys._MEIPASS)  # type: ignore[attr-defined]
     return Path(__file__).resolve().parent.parent
 
 
+def project_dir() -> Path:
+    """完整源码树：源码运行时就是 hot-radar/；安装包里是解包目录下的 project/（packaging/build.py 原样复制进去的
+    全部源码、文档、上游代码和样例）。网页、上游默认配置、样例都从这里读，「使用指南」也从这里列文档和源码。"""
+    if frozen():
+        return bundle_root() / "project"
+    return bundle_root()
+
+
 def web_dir() -> Path:
-    return bundle_root() / "hotradar" / "web"
+    return project_dir() / "hotradar" / "web"
 
 
 def upstream_dir() -> Path:
-    """上游 TrendRadar 的目录（含 config/ 默认配置、version 文件；源码运行时还有 trendradar/ 包）。"""
-    return bundle_root() / "upstream"
+    """上游 TrendRadar 的目录（config/ 默认配置、version 文件、trendradar/ 与 mcp_server/ 源码）。
+    安装包里上游的 Python 模块另外编进了程序，这里的 .py 只用于阅读和单独加载 frequency.py。"""
+    return project_dir() / "upstream"
 
 
 def samples_dir() -> Path:
-    return bundle_root() / "samples"
+    return project_dir() / "samples"
 
 
 def ensure_upstream_importable() -> None:

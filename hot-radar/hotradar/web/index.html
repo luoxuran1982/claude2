@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>热点雷达</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="zoom.js"></script>
+<script src="md.js" defer></script>
+<script src="guide.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icon.svg" alt="" width="28" height="28">
+    <div><b>热点雷达</b><small><span id="app-version">v—</span> · 基于 TrendRadar <span id="up-version">—</span></small></div></div>
+  <div class="top-actions">
+    <div class="zoom" role="group" aria-label="界面缩放">
+      <button id="zoom-out" type="button" title="缩小一档（−5%）" aria-label="缩小">−</button>
+      <select id="zoom-select" title="选择缩放比例" aria-label="缩放比例"></select>
+      <button id="zoom-in" type="button" title="放大一档（＋5%）" aria-label="放大">＋</button>
+      <button id="zoom-reset" type="button" title="恢复 100%" aria-label="恢复 100%">↺</button>
+    </div>
+    <button id="quit-btn" class="btn quit" type="button" title="停止全部后台任务并退出应用">退出</button>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="栏目">
+    <button role="tab" data-tab="home">首页</button>
+    <button role="tab" data-tab="report">最新报告</button>
+    <button role="tab" data-tab="history">历史报告</button>
+    <button role="tab" data-tab="config">配置</button>
+    <button role="tab" data-tab="status">运行状态</button>
+    <button role="tab" data-tab="guide">使用指南</button>
+  </nav>
+</header>
+
+<div class="statusbar">
+  <span id="job-dot" class="dot"></span><span id="job-text">正在连接…</span>
+  <span class="sep">·</span><span id="sched-text" class="muted">定时抓取：—</span>
+  <span class="sep">·</span><span id="mcp-text" class="muted">MCP：—</span>
+  <div id="job-bar" class="progress" hidden><i></i></div>
+</div>
+<div id="error" class="banner error" role="alert" hidden></div>
+
+<main>
+<!-- 首页 -->
+<section class="view" data-view="home">
+  <div class="banner info" id="source-note">
+    <b>数据来源说明：</b><span id="network-note">热榜数据来自第三方公开接口 newsnow。</span>
+    <span class="muted">当前接口：<code id="api-url">—</code>（在「配置 → 平台与 RSS」可改为自建的 newsnow）</span>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-head"><div><h2>抓取</h2><p class="muted">抓取热榜和 RSS → 关键词/AI 筛选 → 生成 HTML 报告 → 按配置推送。每次约 30 秒到 2 分钟。</p></div></div>
+      <div class="actions">
+        <button id="btn-crawl" class="btn primary big" type="button">▶ 立即抓取</button>
+        <button id="btn-demo" class="btn big" type="button" title="不联网，用上游仓库附带的 2025-12-27 样例热榜跑一遍全流程">离线演示</button>
+        <button id="btn-cancel" class="btn danger" type="button" hidden>■ 停止</button>
+      </div>
+      <div id="job-box" class="job" hidden>
+        <div class="job-line"><b id="job-stage">准备中</b><span id="job-pct" class="muted"></span><span id="job-pid" class="muted"></span></div>
+        <div class="progress big"><i id="job-fill"></i></div>
+        <div id="job-platforms" class="chips"></div>
+        <details open><summary class="muted">实时日志（上游 TrendRadar 的输出）</summary><pre id="job-log" class="log"></pre></details>
+      </div>
+      <div id="last-box" class="last"></div>
+    </div>
+    <div class="stack">
+      <div class="card">
+        <div class="card-head"><div><h2>定时抓取</h2><p class="muted">只在应用开着时按间隔自动抓取；关闭窗口或退出后随之停止，不在后台常驻。</p></div></div>
+        <div class="form-row">
+          <label class="switch"><input type="checkbox" id="sched-on"><span>开启定时抓取</span></label>
+          <label>间隔 <select id="sched-interval"></select></label>
+        </div>
+        <p id="sched-status" class="muted"></p>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>数据概况</h2><p class="muted">正式数据（离线演示的数据单独存放，不计入）</p></div>
+          <button class="btn small" id="open-data" type="button">打开数据文件夹</button></div>
+        <div id="stats" class="kv"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>运行记录</h2><p class="muted">最近 200 次（抓取、离线演示、推送测试、体检）。点「日志」看上游的完整输出。</p></div></div>
+    <div class="table-wrap"><table class="data" id="runs-table"><thead><tr>
+      <th>开始时间</th><th>任务</th><th>触发</th><th>结果</th><th>说明</th><th class="num">耗时</th><th></th>
+    </tr></thead><tbody></tbody></table></div>
+  </div>
+</section>
+
+<!-- 最新报告 -->
+<section class="view" data-view="report">
+  <div class="card toolbar">
+    <label>数据 <select id="rp-ws"><option value="main">正式数据</option><option value="demo">离线演示</option></select></label>
+    <span id="rp-info" class="muted"></span>
+    <span class="grow"></span>
+    <button class="btn small" id="rp-reload" type="button">↻ 刷新</button>
+    <button class="btn small" id="rp-external" type="button" title="用系统浏览器打开这份 HTML 文件">在浏览器中打开</button>
+  </div>
+  <div id="rp-empty" class="banner info" hidden>还没有报告。到「首页」点「立即抓取」；网络不通时可以先点「离线演示」看看效果。</div>
+  <div class="frame-wrap" id="rp-wrap"><iframe id="rp-frame" title="最新报告" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe></div>
+</section>
+
+<!-- 历史报告 -->
+<section class="view" data-view="history">
+  <div class="history">
+    <div class="card hist-list">
+      <div class="card-head"><div><h2>历史报告</h2><p class="muted" id="hs-sub"></p></div>
+        <select id="hs-ws" aria-label="数据"><option value="main">正式数据</option><option value="demo">离线演示</option></select></div>
+      <div id="hs-list"></div>
+    </div>
+    <div class="stack">
+      <div class="card toolbar"><b id="hs-title">选择左侧的一份报告</b><span class="grow"></span>
+        <button class="btn small" id="hs-external" type="button" disabled>在浏览器中打开</button></div>
+      <div class="frame-wrap"><iframe id="hs-frame" title="历史报告" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"></iframe></div>
+    </div>
+  </div>
+</section>
+
+<!-- 配置 -->
+<section class="view" data-view="config">
+  <div class="config">
+    <nav class="card cfg-nav" id="cfg-nav" aria-label="配置分类">
+      <button data-cfg="keywords">关键词与筛选</button>
+      <button data-cfg="sources">平台与 RSS</button>
+      <button data-cfg="push">推送渠道</button>
+      <button data-cfg="ai">AI 分析与翻译</button>
+      <button data-cfg="report">报告与调度</button>
+      <button data-cfg="advanced">网络与存储</button>
+      <button data-cfg="mcp">MCP 服务</button>
+      <p class="muted cfg-files" id="cfg-files"></p>
+    </nav>
+    <div class="cfg-body">
+      <div id="cfg-msg" class="banner" hidden></div>
+
+      <!-- 关键词 -->
+      <div class="cfg-panel card" data-panel="keywords">
+        <h2>关键词与筛选</h2>
+        <p class="muted">对应上游的 <code>config/frequency_words.txt</code>（关键词）和 <code>config/ai_interests.txt</code>（AI 兴趣描述）。保存后下一次抓取生效。</p>
+        <div class="form-row">
+          <span>筛选方式</span>
+          <label class="radio"><input type="radio" name="filter-method" value="keyword"> 关键词匹配（不用 AI、不花钱）</label>
+          <label class="radio"><input type="radio" name="filter-method" value="ai"> AI 智能筛选（按兴趣描述分类，每次消耗 token）</label>
+          <button class="btn small" data-save="filter" type="button">保存筛选方式</button>
+        </div>
+        <div class="grid-kw">
+          <div>
+            <div class="sub-head"><b>关键词文件</b><span class="muted" id="kw-dirty"></span></div>
+            <textarea id="kw-text" class="code" spellcheck="false" rows="24" aria-label="关键词"></textarea>
+            <div class="actions">
+              <button class="btn primary" id="kw-save" type="button">保存关键词</button>
+              <button class="btn" id="kw-check" type="button">检查语法</button>
+              <button class="btn" id="kw-revert" type="button">放弃修改</button>
+              <button class="btn" id="kw-add-btn" type="button">＋ 添加一个词组</button>
+            </div>
+            <div id="kw-add" class="inline-form" hidden>
+              <label>显示名称 <input id="kw-add-name" placeholder="例：华为"></label>
+              <label>关键词（逗号分隔，任一命中即可） <input id="kw-add-words" placeholder="华为,鸿蒙,任正非"></label>
+              <label>必须同时包含（可空） <input id="kw-add-req" placeholder="发布会"></label>
+              <label>排除词（可空） <input id="kw-add-not" placeholder="水果"></label>
+              <button class="btn small primary" id="kw-add-ok" type="button">加到文件末尾</button>
+            </div>
+          </div>
+          <div>
+            <div class="sub-head"><b>解析结果</b><span class="muted">（用上游的解析函数）</span></div>
+            <div id="kw-parse" class="parse"></div>
+            <div class="sub-head"><b>试匹配</b><span class="muted">每行一个标题，看它会不会被选中</span></div>
+            <textarea id="kw-titles" rows="5" placeholder="华为发布新款折叠屏手机&#10;震惊！某地发生……&#10;今天天气不错"></textarea>
+            <button class="btn small" id="kw-try" type="button">试匹配</button>
+            <div id="kw-try-out"></div>
+            <details class="cheat"><summary>关键词语法速查</summary>
+              <table class="data small"><tbody>
+                <tr><td><code>华为</code></td><td>普通词：标题包含即命中；同一词组（空行分隔）内多个普通词是「或」</td></tr>
+                <tr><td><code>+发布会</code></td><td>必须词：词组里所有必须词都要出现</td></tr>
+                <tr><td><code>!水果</code></td><td>过滤词：标题含它就排除（上游实现里对所有词组生效）</td></tr>
+                <tr><td><code>@5</code></td><td>该词组最多显示 5 条</td></tr>
+                <tr><td><code>[华为]</code></td><td>写在词组第一行：整组的显示名称</td></tr>
+                <tr><td><code>/华为|鸿蒙/ =&gt; 华为</code></td><td>正则（忽略大小写），<code>=&gt;</code> 后面是显示名称</td></tr>
+                <tr><td><code>[GLOBAL_FILTER]</code></td><td>之后的词是全局过滤词，优先级最高；<code>[WORD_GROUPS]</code> 之后是词组</td></tr>
+                <tr><td><code># 注释</code></td><td>以 # 开头的行不起作用</td></tr>
+              </tbody></table></details>
+          </div>
+        </div>
+        <div class="sub-head"><b>AI 兴趣描述</b><span class="muted">只在筛选方式为「AI 智能筛选」时使用。用自然语言写你关注什么，越靠前越重要。</span></div>
+        <textarea id="ai-interests" class="code" rows="10" spellcheck="false" aria-label="AI 兴趣描述"></textarea>
+        <div class="form-row">
+          <label>最低相关度 <input type="number" step="0.05" min="0" max="1" data-k="ai_filter.min_score"></label>
+          <label>每批标题数 <input type="number" min="1" max="1000" data-k="ai_filter.batch_size"></label>
+          <button class="btn primary" id="interests-save" type="button">保存兴趣描述和参数</button>
+        </div>
+      </div>
+
+      <!-- 平台与 RSS -->
+      <div class="cfg-panel card" data-panel="sources">
+        <h2>平台与 RSS</h2>
+        <div class="banner info small">热榜来自第三方 newsnow 接口：平台 ID 必须是 newsnow 支持的 ID（见 <a href="#" data-url="https://github.com/ourongxing/newsnow/tree/main/server/sources">newsnow 源码 server/sources</a> 里的文件名）。
+          「校验域名」用于防篡改：返回的链接不是 https 或不属于这个域名时，整个平台的数据会被丢弃。</div>
+        <div class="form-row">
+          <label class="switch"><input type="checkbox" data-k="platforms.enabled"><span>抓取热榜平台</span></label>
+          <label class="grow">接口地址 <input data-k="platforms.api_url" placeholder="留空用默认 https://newsnow.busiyi.world/api/s；自建 newsnow 填 https://你的域名/api/s"></label>
+        </div>
+        <div class="table-wrap"><table class="data edit" id="plat-table"><thead><tr><th>启用</th><th>显示名称</th><th>平台 ID</th><th>校验域名</th><th></th></tr></thead><tbody></tbody></table></div>
+        <button class="btn small" id="plat-add" type="button">＋ 添加平台</button>
+        <hr>
+        <div class="form-row">
+          <label class="switch"><input type="checkbox" data-k="rss.enabled"><span>抓取 RSS</span></label>
+          <label class="switch"><input type="checkbox" data-k="rss.freshness_filter.enabled"><span>只推送新文章</span></label>
+          <label>文章最多 <input type="number" min="0" max="3650" data-k="rss.freshness_filter.max_age_days" class="w5"> 天（0 = 不限）</label>
+        </div>
+        <div class="table-wrap"><table class="data edit" id="feed-table"><thead><tr><th>启用</th><th>名称</th><th>ID</th><th>订阅地址</th><th>天数</th><th></th></tr></thead><tbody></tbody></table></div>
+        <button class="btn small" id="feed-add" type="button">＋ 添加 RSS 源</button>
+        <div class="actions"><button class="btn primary" data-save="sources" type="button">保存平台与 RSS</button></div>
+      </div>
+
+      <!-- 推送 -->
+      <div class="cfg-panel card" data-panel="push">
+        <h2>推送渠道</h2>
+        <p class="muted">Webhook 地址、Token、密码只保存在本机数据目录的 <code>secrets.json</code>，不写进 <code>config.yaml</code>；抓取时以环境变量交给上游。
+          输入框留空表示不修改；点「清除」删除已保存的值。多个账号用英文分号 <code>;</code> 分隔。</p>
+        <div class="form-row">
+          <label class="switch"><input type="checkbox" data-k="notification.enabled"><span>启用推送（总开关）</span></label>
+        </div>
+        <div id="push-channels"></div>
+        <div class="actions">
+          <button class="btn primary" data-save="push" type="button">保存推送设置</button>
+          <button class="btn" id="push-test" type="button">发送测试推送</button>
+          <span class="muted">测试推送会给已填写的每个渠道各发一条测试消息（上游 --test-notification），结果在首页的运行记录里。</span>
+        </div>
+      </div>
+
+      <!-- AI -->
+      <div class="cfg-panel card" data-panel="ai">
+        <h2>AI 分析与翻译</h2>
+        <p class="muted">上游通过 LiteLLM 调用大模型：模型写成「提供商/模型名」，如 <code>deepseek/deepseek-v4-flash</code>、<code>openai/gpt-4o</code>。
+          用国内中转或自建服务时填「接口地址」，并在模型名前加 <code>openai/</code>。没填 Key 时 AI 功能自动跳过，不影响抓取。</p>
+        <div class="form-grid">
+          <label>模型 <input data-k="ai.model" placeholder="deepseek/deepseek-v4-flash"></label>
+          <label>API Key <span class="secret-wrap" data-secret="ai_api_key"></span></label>
+          <label>接口地址（可空） <input data-k="ai.api_base" placeholder="https://…/v1"></label>
+          <label>超时（秒） <input type="number" min="5" max="1800" data-k="ai.timeout"></label>
+          <label>温度 <input type="number" step="0.1" min="0" max="2" data-k="ai.temperature"></label>
+          <label>最大输出 token（0 = 不传） <input type="number" min="0" data-k="ai.max_tokens"></label>
+        </div>
+        <h3>AI 分析</h3>
+        <div class="form-grid">
+          <label class="switch"><input type="checkbox" data-k="ai_analysis.enabled"><span>每次运行生成 AI 分析</span></label>
+          <label>语言 <input data-k="ai_analysis.language"></label>
+          <label>模式 <select data-k="ai_analysis.mode"></select></label>
+          <label>最多分析条数 <input type="number" min="1" max="2000" data-k="ai_analysis.max_news_for_analysis"></label>
+          <label class="switch"><input type="checkbox" data-k="ai_analysis.include_rss"><span>包含 RSS</span></label>
+          <label class="switch"><input type="checkbox" data-k="ai_analysis.include_standalone"><span>包含独立展示区</span></label>
+          <label class="switch"><input type="checkbox" data-k="ai_analysis.include_rank_timeline"><span>带完整排名轨迹（更准，多耗 token）</span></label>
+        </div>
+        <h3>AI 翻译</h3>
+        <div class="form-grid">
+          <label class="switch"><input type="checkbox" data-k="ai_translation.enabled"><span>翻译标题</span></label>
+          <label>目标语言 <input data-k="ai_translation.language"></label>
+          <label class="switch"><input type="checkbox" data-k="ai_translation.scope.hotlist"><span>翻译热榜</span></label>
+          <label class="switch"><input type="checkbox" data-k="ai_translation.scope.rss"><span>翻译 RSS</span></label>
+          <label class="switch"><input type="checkbox" data-k="ai_translation.scope.standalone"><span>翻译独立展示区</span></label>
+        </div>
+        <div class="actions">
+          <button class="btn primary" data-save="ai" type="button">保存 AI 设置</button>
+          <button class="btn" id="run-doctor" type="button">环境体检</button>
+          <span class="muted">体检会检查配置、AI 连通性和推送渠道（上游 --doctor），结果在首页运行记录的日志里。</span>
+        </div>
+      </div>
+
+      <!-- 报告与调度 -->
+      <div class="cfg-panel card" data-panel="report">
+        <h2>报告与调度</h2>
+        <div class="form-grid">
+          <label>报告模式 <select data-k="report.mode"></select></label>
+          <label>分组方式 <select data-k="report.display_mode"></select></label>
+          <label>排名高亮阈值 <input type="number" min="1" max="100" data-k="report.rank_threshold"></label>
+          <label>每组最多条数（0 = 不限） <input type="number" min="0" data-k="report.max_news_per_keyword"></label>
+          <label class="switch"><input type="checkbox" data-k="report.sort_by_position_first"><span>按关键词文件顺序排组</span></label>
+        </div>
+        <p class="muted">当前榜单：每次列出现在还在榜上的匹配新闻；全天汇总：当天所有匹配新闻；增量监控：只列新出现的，没有新增就不推送。</p>
+        <h3>报告和推送里显示哪些区域</h3>
+        <div class="form-grid">
+          <label class="switch"><input type="checkbox" data-k="display.regions.hotlist"><span>热榜（关键词/AI 筛选结果）</span></label>
+          <label class="switch"><input type="checkbox" data-k="display.regions.new_items"><span>新增热点</span></label>
+          <label class="switch"><input type="checkbox" data-k="display.regions.rss"><span>RSS 订阅</span></label>
+          <label class="switch"><input type="checkbox" data-k="display.regions.standalone"><span>独立展示区（完整榜单，不过滤）</span></label>
+          <label class="switch"><input type="checkbox" data-k="display.regions.ai_analysis"><span>AI 分析</span></label>
+          <label>独立展示每源条数 <input type="number" min="0" data-k="display.standalone.max_items"></label>
+        </div>
+        <div class="sub-head"><b>独立展示区的平台</b></div>
+        <div id="standalone-plats" class="checks"></div>
+        <h3>上游的推送时段调度</h3>
+        <p class="muted">这是上游 TrendRadar 自带的「什么时间推送、什么时间做 AI 分析」规则（config/timeline.yaml）。
+          它只决定<b>每次运行时</b>是否推送和分析，<b>不会自己触发抓取</b>；什么时候抓取由首页的「定时抓取」或手动决定。</p>
+        <div class="form-grid">
+          <label class="switch"><input type="checkbox" data-k="schedule.enabled"><span>启用推送时段调度</span></label>
+          <label>预设 <select data-k="schedule.preset" id="preset-select"></select></label>
+        </div>
+        <p class="muted" id="preset-desc"></p>
+        <div class="actions"><button class="btn primary" data-save="report" type="button">保存报告与调度</button></div>
+      </div>
+
+      <!-- 网络与存储 -->
+      <div class="cfg-panel card" data-panel="advanced">
+        <h2>网络与存储</h2>
+        <div class="form-grid">
+          <label>热榜请求间隔（毫秒） <input type="number" min="50" max="60000" data-k="advanced.crawler.request_interval"></label>
+          <label class="switch"><input type="checkbox" data-k="advanced.crawler.use_proxy"><span>热榜走代理</span></label>
+          <label>代理地址 <input data-k="advanced.crawler.default_proxy" placeholder="http://127.0.0.1:7890"></label>
+          <label>RSS 超时（秒） <input type="number" min="1" max="300" data-k="advanced.rss.timeout"></label>
+          <label class="switch"><input type="checkbox" data-k="advanced.rss.use_proxy"><span>RSS 走代理</span></label>
+          <label>RSS 专用代理（可空） <input data-k="advanced.rss.proxy_url"></label>
+          <label>数据保留天数（0 = 永久） <input type="number" min="0" data-k="storage.local.retention_days"></label>
+          <label class="switch"><input type="checkbox" data-k="storage.formats.txt"><span>另存 TXT 快照</span></label>
+          <label>时区 <input data-k="app.timezone" placeholder="Asia/Shanghai"></label>
+        </div>
+        <div class="actions"><button class="btn primary" data-save="advanced" type="button">保存网络与存储</button></div>
+      </div>
+
+      <!-- MCP -->
+      <div class="cfg-panel card" data-panel="mcp">
+        <h2>MCP 服务（可选，默认关闭）</h2>
+        <p class="muted">上游 TrendRadar 的 MCP 服务器：让 Claude Desktop、Cherry Studio 等支持 MCP 的 AI 客户端直接查询本机的热榜数据（最新新闻、按日期查、话题趋势、搜索等 20 多个工具）。
+          开启后会多一个工作进程，只监听 127.0.0.1；关闭窗口或退出应用时一起停止，下次打开应用需要重新开启。</p>
+        <div class="form-row">
+          <label class="switch"><input type="checkbox" id="mcp-on"><span>运行 MCP 服务</span></label>
+          <label>端口 <input type="number" id="mcp-port" min="1024" max="65535" class="w6"></label>
+          <span id="mcp-state" class="muted"></span>
+        </div>
+        <div class="sub-head"><b>客户端怎么连</b></div>
+        <pre class="log" id="mcp-howto"></pre>
+        <details><summary class="muted">MCP 服务日志</summary><pre class="log" id="mcp-log"></pre></details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 运行状态 -->
+<section class="view" data-view="status">
+  <div class="card">
+    <div class="card-head"><div><h2>运行状态：当前进程与内存</h2><p class="muted">列出本次启动涉及的每个应用进程；数值每次现读，不用旧值。</p></div>
+      <button class="btn small" id="proc-refresh" type="button">立即刷新</button></div>
+    <div id="proc-body"><p class="muted">正在读取…</p></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>后台任务</h2><p class="muted">关闭窗口或点「退出」时，下面这些全部停止。</p></div></div>
+    <div id="bg-body"></div>
+  </div>
+</section>
+
+<!-- 使用指南 -->
+<section class="view" data-view="guide">
+  <div class="guide">
+    <nav class="guide-nav card" id="guide-nav" aria-label="使用指南目录"></nav>
+    <article class="guide-body card" id="guide-body"><p class="muted">正在读取…</p></article>
+  </div>
+</section>
+</main>
+
+<footer class="foot-note">
+  热点雷达是开源项目 <a href="#" data-url="https://github.com/sansan0/TrendRadar">TrendRadar</a>（GPL-3.0）的桌面版；整个应用同样按 GPL-3.0 发布，完整源码在「使用指南 → 源码」。
+  热榜数据来自第三方 <a href="#" data-url="https://github.com/ourongxing/newsnow">newsnow</a> 公开接口。
+</footer>
+
+<dialog id="log-dialog">
+  <form method="dialog"><h2 id="log-title">日志</h2><pre id="log-body" class="log tall"></pre>
+    <div class="dialog-actions"><button class="btn primary">关闭</button></div></form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

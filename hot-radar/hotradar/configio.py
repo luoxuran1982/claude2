@@ -187,6 +187,8 @@ FIELDS: dict[str, tuple] = {
     "advanced.rss.proxy_url": ("url",),
 }
 
+NONEMPTY = {"app.timezone": "时区", "ai_analysis.language": "AI 分析语言", "ai_translation.language": "翻译目标语言"}
+
 # 密钥：secrets.json 里的键 → 上游读取的环境变量
 SECRETS = {
     "ai_api_key": ("AI_API_KEY", "AI 接口密钥（API Key）"),
@@ -361,6 +363,16 @@ def validate(dotted: str, value):
     if kind == "str":
         if not isinstance(value, str) or len(value) > 500 or "\n" in value:
             raise ConfigError(f"{dotted} 应为一行文字")
+        if dotted in NONEMPTY and not value.strip():
+            raise ConfigError(f"{NONEMPTY[dotted]}不能为空")
+        if dotted == "app.timezone":
+            try:
+                import pytz
+                pytz.timezone(value.strip())
+            except ImportError:
+                pass
+            except Exception:  # noqa: BLE001
+                raise ConfigError(f"时区「{value}」无效，例：Asia/Shanghai") from None
         return value.strip()
     if kind == "url":
         return _check_url(str(value or ""), dotted)
