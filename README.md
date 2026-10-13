@@ -2,36 +2,42 @@
 
 把“主题 + 你的观点 + 参考资料”变成横版长视频和竖版短视频。**大模型只写稿和分镜，默认整条视频只调用 1 次**；配音、画面、字幕时间轴和合成都在本机完成，渲染多少遍都不再花 token。
 
-Windows 和 macOS 都能运行（Linux 也可以）。界面在浏览器里打开，后台是本机 Python 服务，只监听 127.0.0.1。
+当前版本 0.3.0。Windows 和 macOS（Apple 芯片）各有安装包，打开后是独立窗口（Linux 可从源码运行）。后台是同一进程里的本机服务，只监听 127.0.0.1。
 
 这个应用按《AI知识类视频生意调研报告》里的“路径三：代码生成动画”和补充五“配图配错怎么治”来做，参考了 Codex 版“内容视频工坊”的调用链（本机服务 → 逐句配音 → 采样数定时间轴 → Pillow 画帧 → FFmpeg），但改成了跨平台实现。
 
 ## 快速开始
 
-### 方式一：双击启动脚本（需要 Python 3.9+）
+### 方式一：安装包（推荐，不需要装 Python 和 FFmpeg）
+
+安装包由 GitHub Actions 构建：仓库 → Actions → build → 最新一次成功的运行 → Artifacts（需要登录 GitHub，保留 90 天）。
+
+| | macOS（Apple 芯片） | Windows（x64） |
+| --- | --- | --- |
+| 下载 | `AIVideoStudio-macOS-AppleSilicon` 里的 `AIVideoStudio-<版本>-macOS-arm64.dmg` | `AIVideoStudio-Windows-x64` 里的 `AIVideoStudio-Setup-<版本>-x64.exe`（另有免安装 zip） |
+| 安装 | 双击 `.dmg`，把「AI 知识视频工坊.app」拖进「应用程序」 | 双击 `Setup.exe`，装到 `%LOCALAPPDATA%\Programs\AIVideoStudio\`，不需要管理员权限，开始菜单和桌面有快捷方式 |
+| 首次打开 | 没有 Apple 签名：在「应用程序」里右键 →「打开」→「打开」；仍被拦截就到「系统设置 → 隐私与安全性」点「仍要打开」 | 没有代码签名：SmartScreen 提示时点「更多信息 → 仍要运行」 |
+| 退出 | ⌘Q、菜单「退出」、程序坞右键「退出」、点红色按钮关窗口 | 点 ×、Alt+F4、任务栏右键「关闭窗口」 |
+| 卸载 | 把 `.app` 拖进废纸篓 | 「设置 → 应用」或开始菜单里的卸载快捷方式 |
+
+关闭窗口或退出时，后台服务和本应用启动的 FFmpeg、配音子进程都会结束；最小化只是隐藏，应用继续运行。窗口建不起来时（例如 Windows 缺 WebView2 运行时）会自动改用默认浏览器，原因写在数据目录的 `studio.log`。数据目录（卸载后保留）：macOS `~/Library/Application Support/AIVideoStudio/`，Windows `%APPDATA%\AIVideoStudio\`。
+
+### 方式二：双击启动脚本（需要 Python 3.9+，开发者用）
 
 | 系统 | 操作 |
 | --- | --- |
 | macOS | 双击 `start-mac.command`。被系统拦截时：右键 → 打开。 |
 | Windows | 双击 `start-windows.bat`。安装 Python 时勾选 “Add python.exe to PATH”。 |
 
-第一次运行会自动建虚拟环境 `.venv` 并安装依赖（Pillow、imageio-ffmpeg、certifi），约 1 分钟。之后直接启动。启动后浏览器自动打开；关掉命令行窗口或点页面右上角“退出”即可关闭。
+第一次运行会自动建虚拟环境 `.venv` 并安装依赖（Pillow、imageio-ffmpeg、certifi、psutil、pywebview），约 1 分钟。之后直接启动，打开独立窗口；关窗口、点页面右上角「退出」或关掉命令行窗口即可退出。
 
-### 方式二：命令行
+### 方式三：命令行
 
 ```bash
 pip install -r requirements.txt
-python run.py            # 自动打开浏览器
-python run.py --window   # 独立窗口（需 pip install pywebview）
-```
-
-### 方式三：免安装包
-
-仓库的 GitHub Actions 会在 Windows 和 macOS 上各打一个包（Actions → build → Artifacts）。解压后双击 `AIVideoStudio`（Windows 是 `AIVideoStudio.exe`），不需要装 Python 和 FFmpeg。也可以自己打包：
-
-```bash
-pip install -r requirements.txt pyinstaller
-python packaging/build.py      # 在哪个系统上运行就打出哪个系统的包
+python run.py              # 独立窗口（不可用时自动改用浏览器）
+python run.py --browser    # 用默认浏览器打开
+pip install pyinstaller && python packaging/build.py   # 在哪个系统上运行就打出哪个系统的安装包
 ```
 
 ### 第一次使用要设置的
@@ -40,12 +46,12 @@ python packaging/build.py      # 在哪个系统上运行就打出哪个系统�
 2. **设置 → 配音**：默认用系统自带语音（macOS 的婷婷、Windows 的慧慧），免费离线，点“试听”。想要更自然的声音，改用云端 TTS（硅基流动 CosyVoice2 / IndexTTS-2，可以填你克隆的音色 ID）。
 3. 可选：把背景音乐放进“音乐文件夹”，把授权清晰的图片导入“素材库”。
 
-### 应用内「使用指南」、运行状态和界面缩放（0.2.0）
+### 应用内「使用指南」、运行状态和界面缩放（0.2.0 起）
 
 - **使用指南**（顶部导航）：离线显示本 README 和 `docs/` 下全部文档；「源码」标签逐个只读查看本应用的手写源码（带行号），可下载全部源码 zip；「快速上手」是原来的说明页。
 - **运行状态**：列出本应用的进程（主进程、渲染时的 FFmpeg、配音子进程）、PID、内存（macOS RSS / Windows 工作集，MiB）和采样时间。
 - **界面缩放**：顶部右侧「−」、百分比下拉、「＋」、「100%」，70%–120% 每 5% 一档，下次打开保留。
-- **退出**：点「退出」或关闭控制台窗口，会结束后台服务和本应用启动的子进程。
+- **退出**：关闭窗口、⌘Q / Alt+F4 或点页面「退出」，会结束后台服务和本应用启动的子进程。
 
 文档入口：[docs/00 项目阅读入口.md](<docs/00 项目阅读入口.md>) · [docs/01 使用指南.md](<docs/01 使用指南.md>) · [docs/02 软件框架与系统架构.md](<docs/02 软件框架与系统架构.md>)
 
