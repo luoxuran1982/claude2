@@ -161,7 +161,7 @@ def finish_windows(folder, icon_dir):
     (folder / "安装说明.txt").write_text(INSTALL_NOTE, encoding="utf-8-sig")
     portable = DIST / f"{NAME}-{__version__}-windows-x64"
     shutil.make_archive(str(portable), "zip", DIST, NAME)
-    print("免安装版：", portable.with_suffix(".zip"))
+    print("免安装版：", f"{portable}.zip")
     makensis = find_makensis()
     if not makensis:
         print("没有找到 NSIS（makensis），跳过安装程序。安装：choco install nsis")
