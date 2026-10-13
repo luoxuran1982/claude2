@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 520" width="880" height="520" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="13">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#52514e"/></marker>
+  </defs>
+  <rect width="880" height="520" fill="#ffffff"/>
+  <text x="440" y="26" text-anchor="middle" font-size="16" font-weight="600" fill="#0b0b0b">舆情监控系统 v0.2 架构</text>
+
+  <!-- 应用窗口 -->
+  <rect x="20" y="44" width="840" height="86" rx="10" fill="#e5effb" stroke="#2a78d6"/>
+  <text x="36" y="66" font-weight="600" fill="#1d4f8f">应用窗口进程（Edge / Chrome --app，独立配置目录，后台启动的子进程）</text>
+  <text x="36" y="90" fill="#0b0b0b">index.html · app.js · style.css · markdown.js</text>
+  <text x="36" y="114" fill="#52514e">总览 · 资讯流 · 监控对象 · 数据源 · 预警中心 · 运行状态 · 使用指南 · 设置 ｜ 顶部：缩放 70–120% · 版本 · 退出</text>
+
+  <!-- 箭头：请求与推送 -->
+  <line x1="300" y1="132" x2="300" y2="176" stroke="#52514e" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="308" y="158" fill="#52514e">HTTP JSON 请求 /api/*</text>
+  <line x1="580" y1="176" x2="580" y2="132" stroke="#52514e" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="588" y="158" fill="#52514e">SSE 推送 /api/events</text>
+
+  <!-- 后台进程 -->
+  <rect x="20" y="178" width="840" height="232" rx="10" fill="#f6f6f4" stroke="#7d7c77"/>
+  <text x="36" y="200" font-weight="600" fill="#0b0b0b">后台服务进程（run.py，Python，监听 127.0.0.1:8848）</text>
+
+  <rect x="36" y="214" width="250" height="70" rx="8" fill="#fff" stroke="#a3a29c"/>
+  <text x="48" y="236" font-weight="600">server.App / RequestHandler</text>
+  <text x="48" y="256" fill="#52514e">路由、静态文件、SSE、退出流程</text>
+  <text x="48" y="274" fill="#52514e">防 DNS 重绑定 + X-Monitor 头</text>
+
+  <rect x="304" y="214" width="250" height="70" rx="8" fill="#fff" stroke="#a3a29c"/>
+  <text x="316" y="236" font-weight="600">guide.py / procinfo.py</text>
+  <text x="316" y="256" fill="#52514e">文档与源码白名单、源码 zip</text>
+  <text x="316" y="274" fill="#52514e">进程 PID 与 RSS / 工作集</text>
+
+  <rect x="572" y="214" width="272" height="70" rx="8" fill="#fff" stroke="#a3a29c"/>
+  <text x="584" y="236" font-weight="600">lifecycle.Watchdog</text>
+  <text x="584" y="256" fill="#52514e">窗口进程结束或页面断开 ≥10 秒</text>
+  <text x="584" y="274" fill="#52514e">→ App.shutdown() 停采集、关窗口</text>
+
+  <rect x="36" y="300" width="808" height="94" rx="8" fill="#fff" stroke="#a3a29c"/>
+  <text x="48" y="322" font-weight="600">collector.Collector（1 个调度线程 + 最多 4 个抓取线程，没有独立进程）</text>
+  <g font-size="12.5">
+    <rect x="48" y="336" width="120" height="40" rx="6" fill="#fdf3dc" stroke="#b77900"/><text x="108" y="361" text-anchor="middle">sources/* 抓取</text>
+    <rect x="198" y="336" width="130" height="40" rx="6" fill="#fdf3dc" stroke="#b77900"/><text x="263" y="361" text-anchor="middle">sentiment 打分</text>
+    <rect x="358" y="336" width="130" height="40" rx="6" fill="#fdf3dc" stroke="#b77900"/><text x="423" y="361" text-anchor="middle">matcher 匹配对象</text>
+    <rect x="518" y="336" width="130" height="40" rx="6" fill="#fdf3dc" stroke="#b77900"/><text x="583" y="361" text-anchor="middle">db.Store 去重入库</text>
+    <rect x="678" y="336" width="150" height="40" rx="6" fill="#fdf3dc" stroke="#b77900"/><text x="753" y="361" text-anchor="middle">预警 → EventBus</text>
+    <line x1="168" y1="356" x2="196" y2="356" stroke="#52514e" marker-end="url(#a)"/>
+    <line x1="328" y1="356" x2="356" y2="356" stroke="#52514e" marker-end="url(#a)"/>
+    <line x1="488" y1="356" x2="516" y2="356" stroke="#52514e" marker-end="url(#a)"/>
+    <line x1="648" y1="356" x2="676" y2="356" stroke="#52514e" marker-end="url(#a)"/>
+  </g>
+
+  <!-- 外部与数据 -->
+  <line x1="200" y1="412" x2="200" y2="446" stroke="#52514e" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="208" y="434" fill="#52514e">urllib（可走代理）</text>
+  <line x1="640" y1="412" x2="640" y2="446" stroke="#52514e" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="648" y="434" fill="#52514e">sqlite3（WAL）</text>
+
+  <rect x="20" y="448" width="400" height="58" rx="10" fill="#fdeadf" stroke="#c2410c"/>
+  <text x="36" y="470" font-weight="600">外部消息来源（互联网）</text>
+  <text x="36" y="492" fill="#52514e">新浪 · 东财 · 财联社 · 必应 · Google · Yahoo · RSS · 行情</text>
+
+  <rect x="440" y="448" width="420" height="58" rx="10" fill="#e8f5ec" stroke="#0b8a3e"/>
+  <text x="456" y="470" font-weight="600">数据目录（替换版本不丢失）</text>
+  <text x="456" y="492" fill="#52514e">monitor.db · monitor.log · browser-profile/</text>
+</svg>
