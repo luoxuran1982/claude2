@@ -1,4 +1,4 @@
-name: obsidian-docs
+name: Obsidian 文档同步
 
 # 把所有 claude/ 分支里各项目的文档汇总到 obsidian 分支，用户 Mac 上的 Obsidian 只拉取这个分支。
 # 定时任务兜底：还没有这个工作流文件的旧分支，靠它每天汇总一次。

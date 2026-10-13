@@ -1,4 +1,4 @@
-name: sentiment-monitor
+name: 舆情监控系统
 
 on:
   push:
