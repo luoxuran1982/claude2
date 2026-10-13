@@ -226,7 +226,7 @@ td.r, th.r { text-align: right; }
 
 /* ---- 界面缩放：body 上用 CSS zoom，整屏高度按缩放比例修正 */
 .app { min-height: calc(100vh / var(--zoom, 1)); }
-.nav { height: calc(100vh / var(--zoom, 1)); }
+@media (min-width: 761px) { .nav { height: calc(100vh / var(--zoom, 1)); } }
 .top-right { flex-wrap: wrap; justify-content: flex-end; }
 .zoom { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); flex: none; }
 .zoom .zbtn { border: 0; background: transparent; min-width: 28px; height: 28px; cursor: pointer; font-size: 15px; line-height: 1; color: var(--text); }
