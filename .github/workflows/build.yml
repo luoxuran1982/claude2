@@ -4,6 +4,8 @@ on:
   push:
     branches: ["main", "claude/**"]
     tags: ["v*"]
+    # 只在 AI 知识视频工坊自己的文件变动时构建（其他项目和文档推送不触发）
+    paths: ["studio/**", "packaging/**", "tests/**", "run.py", "requirements.txt", "README.md", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 jobs:

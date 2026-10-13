@@ -129,7 +129,7 @@ def main(dest: Path) -> None:
                 out.write_text(rewrite_links(show(ref, f), f, ref, copied), encoding="utf-8")
             else:
                 out.write_bytes(git("show", f"{ref}:{f}", binary=True))
-        entry = next((f for f in files if f.endswith("docs/00 项目阅读入口.md")), None) or files[0]
+        entry = next((f for f in files if f.endswith(("docs/00 项目阅读入口.md", f"{SPEC_DIR}/交付要求.md"))), files[0])
         rel = f"{name}/{entry.removeprefix(strip)}"
         day = time.strftime("%Y-%m-%d %H:%M", time.gmtime(ts + 8 * 3600))
         rows.append(f"| [{name}](<{rel}>) | `{ref.removeprefix('origin/')}` | {day} |")
