@@ -1,0 +1,121 @@
+name: 热点雷达
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    paths: ["hot-radar/**", ".github/workflows/hot-radar.yml"]
+  workflow_dispatch:
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+defaults:
+  run:
+    working-directory: hot-radar
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt pytest
+      - name: 外壳测试（含离线演示、MCP 看门狗等集成测试）
+        run: python -m unittest discover -s tests -v
+      - name: 上游 TrendRadar 自带测试（离线）
+        working-directory: hot-radar/upstream
+        run: python -m pytest -q tests
+      - name: 网页纯函数测试
+        run: node tests/web.test.js
+      - name: 源码运行冒烟测试
+        run: python packaging/smoke.py --source
+      - name: 源码 zip
+        run: |
+          mkdir -p ../out
+          cd .. && zip -qr out/HotRadar-source.zip hot-radar .github/workflows/hot-radar.yml -x 'hot-radar/build/*' 'hot-radar/dist/*' '*/__pycache__/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HotRadar-source
+          path: out/HotRadar-source.zip
+
+  live-check:
+    # 真实访问第三方 newsnow 接口抓一次，确认接口还能用；它不归我们管，失败不阻塞打包
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -c constraints.txt
+      - run: python packaging/smoke.py --source --live
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-latest          # Apple Silicon（用户的 Mac 是 M4），不出 Intel 版
+            label: macOS-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -c constraints.txt pyinstaller pillow
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # 社区源偶尔连不上：重试几次，装不上就让这一步失败
+        run: |
+          for ($i = 1; $i -le 4; $i++) {
+            choco install nsis -y --no-progress
+            if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { exit 0 }
+            Start-Sleep -Seconds (15 * $i)
+          }
+          exit 1
+      - name: Build
+        run: python packaging/build.py
+      - name: 安装包冒烟测试（启动、接口、文档与源码、离线演示、MCP、退出后进程结束与端口释放）
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/HotRadar/HotRadar.exe; else EXE="dist/热点雷达.app/Contents/MacOS/HotRadar"; fi
+          python packaging/smoke.py "$EXE"
+      - name: Check WebView2 window can be created
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:HOTRADAR_DATA = "$env:RUNNER_TEMP\hr-gui"
+          $p = Start-Process -FilePath dist\HotRadar\HotRadar.exe -PassThru
+          Start-Sleep -Seconds 25
+          $log = Get-Content "$env:HOTRADAR_DATA\hotradar.log" -Raw
+          Write-Output $log
+          Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $p.Id } | Select-Object ProcessId, Name | Format-Table
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if ($log -match "原生窗口启动失败") { Write-Warning "WebView2 窗口在 CI 上没起来（应用会自动改用浏览器）" }
+      - name: 列出产物
+        run: ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HotRadar-${{ matrix.label }}
+          path: |
+            hot-radar/dist/*.exe
+            hot-radar/dist/*.zip
+            hot-radar/dist/*.dmg
+          if-no-files-found: error
