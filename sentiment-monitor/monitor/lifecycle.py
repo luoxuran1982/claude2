@@ -122,8 +122,8 @@ class Watchdog(threading.Thread):
     def check(self, now=None) -> str:
         now = now or time.time()
         cfg = self.get_settings()
-        if not cfg.get("auto_exit", True):
-            return ""
+        # 不再支持“关窗后继续在后台采集”的常驻模式：旧版设置里的 auto_exit=false 一律忽略。
+        # 关窗后仍要持续运行的后台属于需要用户单独约定的功能，见使用指南「启停与退出」。
         if self.bus.clients() == 0:
             if self.browser.exited():
                 return "应用窗口已关闭"

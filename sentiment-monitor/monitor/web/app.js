@@ -7,7 +7,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LABEL = { pos: "利好", neg: "利空", neu: "中性" };
 const ARROW = { pos: "▲", neg: "▼", neu: "●" };
-const TITLES = { overview: "总览", feed: "资讯流", entities: "监控对象", sources: "数据源", alerts: "预警中心", settings: "设置" };
+const TITLES = { overview: "总览", feed: "资讯流", entities: "监控对象", sources: "数据源", alerts: "预警中心", status: "运行状态", guide: "使用指南", settings: "设置" };
 const TZ = -new Date().getTimezoneOffset();
 
 const state = {
@@ -626,11 +626,164 @@ function setUnread(n) {
   b.textContent = n > 99 ? "99+" : n;
 }
 
+// ------------------------------------------------------------------ 界面缩放（70%–120%，每 5% 一档）
+const ZOOMS = [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120];
+function loadZoom() {
+  let z = 100;
+  try { z = parseInt(localStorage.getItem("zoom") || "100", 10); } catch (e) { /* 无痕模式 */ }
+  return ZOOMS.includes(z) ? z : 100;
+}
+function setZoom(z, save = true) {
+  if (!ZOOMS.includes(z)) return;
+  state.zoom = z;
+  document.documentElement.style.setProperty("--zoom", z / 100);
+  document.body.style.zoom = z / 100;
+  $("#zoomSel").value = String(z);
+  $("#zoomOut").disabled = z <= ZOOMS[0];
+  $("#zoomIn").disabled = z >= ZOOMS[ZOOMS.length - 1];
+  $("#zoomReset").disabled = z === 100;
+  if (save) { try { localStorage.setItem("zoom", String(z)); } catch (e) { /* 无痕模式 */ } }
+  redrawCharts();
+}
+function redrawCharts() {
+  if (state.page === "overview" && state.ovData) drawTrend($("#chBars"), $("#chLine"), state.ovData.trend);
+}
+function initZoom() {
+  $("#zoomSel").innerHTML = ZOOMS.map((z) => `<option value="${z}">${z}%</option>`).join("");
+  $("#zoomSel").onchange = (e) => setZoom(parseInt(e.target.value, 10));
+  $("#zoomOut").onclick = () => setZoom(ZOOMS[Math.max(0, ZOOMS.indexOf(state.zoom) - 1)]);
+  $("#zoomIn").onclick = () => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(state.zoom) + 1)]);
+  $("#zoomReset").onclick = () => setZoom(100);
+  window.addEventListener("storage", (e) => { if (e.key === "zoom") setZoom(loadZoom(), false); });
+  setZoom(loadZoom(), false);
+}
+
+// ------------------------------------------------------------------ 页面：运行状态（进程与内存）
+let statusTimer = null;
+PAGES.status = async () => {
+  const v = $("#view");
+  v.innerHTML = `<div class="card" style="margin-bottom:16px"><div class="card-head"><h3>当前进程与内存</h3>
+      <span class="muted" id="psTime"></span><button class="btn small" id="psRefresh">刷新</button></div>
+      <div id="psBody" class="muted">读取中…</div></div>
+    <div class="card"><h3 style="margin-bottom:8px">口径说明</h3><div class="hint" id="psHelp"></div></div>`;
+  $("#psRefresh").onclick = loadProcesses;
+  await loadProcesses();
+  clearInterval(statusTimer);
+  statusTimer = setInterval(() => { if (state.page === "status") loadProcesses(); else clearInterval(statusTimer); }, 5000);
+};
+async function loadProcesses() {
+  let d;
+  try { d = await GET("/api/processes"); } catch (e) {
+    if ($("#psBody")) $("#psBody").innerHTML = `<div class="empty">暂不可用：${esc(e.message)}</div>`;
+    return;
+  }
+  if (!$("#psBody")) return;
+  const t = (ts) => new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour12: false });
+  const mem = (m) => (m == null ? `<span class="muted">暂不可用</span>` : `${m.toFixed(1)}`);
+  $("#psTime").textContent = `采样时间 ${t(d.sampled_at)} · 每 5 秒刷新`;
+  $("#psBody").innerHTML = `<div class="md-table"><table class="ps-table"><thead><tr><th>职责</th><th>进程名</th><th style="text-align:right">PID</th><th style="text-align:right">内存（${esc(d.unit)}）</th><th>采样时间</th></tr></thead><tbody>
+    ${d.processes.map((p) => `<tr data-pid="${p.pid}"><td>${esc(p.role)}</td><td><code>${esc(p.name || "—")}</code></td><td class="num" style="text-align:right">${p.pid}</td><td class="num" style="text-align:right">${mem(p.mem_mib)}</td><td class="num">${t(p.sampled_at)}</td></tr>`).join("")}
+    </tbody><tfoot><tr><td colspan="3">本应用合计（${d.processes.length} 个进程，各进程相加）</td><td class="num" style="text-align:right">${mem(d.total_mib)}</td><td></td></tr></tfoot></table></div>
+    <p class="hint" style="margin-top:10px">采集任务：${esc(d.workers)}</p>
+    ${d.notes.map((n) => `<p class="hint">${esc(n)}</p>`).join("")}`;
+  $("#psHelp").innerHTML = `内存口径：<b>${esc(d.metric)}</b>，单位 MiB（1 MiB = 1024² 字节）。macOS 用常驻内存 RSS，Windows 用工作集（Working Set）。
+    Windows 任务管理器默认显示「专用工作集」，通常比这里的工作集小。合计是各进程相加，进程间共享的内存可能被重复计算。
+    同一进程里的线程共享 PID，不算多个进程。读不到时显示「暂不可用」，不会沿用旧值。读取方式：${esc(d.reader)}。`;
+}
+
+// ------------------------------------------------------------------ 页面：使用指南（文档 + 源码）
+const guideState = { docs: null, assets: [], sources: null };
+function normPath(base, rel) {
+  const parts = base ? base.split("/") : [];
+  for (const seg of rel.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") parts.pop(); else parts.push(seg);
+  }
+  return parts.join("/");
+}
+function guideHref(q) { return `#/guide${qstr(q)}`; }
+async function guideLists() {
+  if (!guideState.docs) {
+    const d = await GET("/api/guide/docs");
+    guideState.docs = d.docs;
+    guideState.assets = d.assets;
+  }
+  if (!guideState.sources) guideState.sources = (await GET("/api/guide/sources")).files;
+}
+PAGES.guide = async (q) => {
+  await guideLists();
+  const docs = guideState.docs;
+  const cur = q.src || q.view === "source" ? null : (docs.find((d) => d.path === q.doc) || docs[0]);
+  const v = $("#view");
+  v.innerHTML = `<div class="guide">
+    <nav class="guide-toc card">
+      <div class="toc-h">文档（${docs.length} 篇）</div>
+      ${docs.map((d) => `<a href="${guideHref({ doc: d.path })}" class="${cur && cur.path === d.path ? "active" : ""}">${esc(d.title)}</a>`).join("")}
+      <div class="toc-h">源码</div>
+      <a href="${guideHref({ view: "source" })}" class="${!cur ? "active" : ""}">全部手写源码（${guideState.sources.length} 个文件）</a>
+      <a href="/api/guide/source.zip" download>下载全部源码（zip）</a>
+      ${guideState.assets.length ? `<div class="toc-h">附件</div>${guideState.assets.map((a) => `<a href="/guide-file/${encodeURI(a.path)}" target="_blank">${esc(a.path.split("/").pop())}</a>`).join("")}` : ""}
+    </nav>
+    <article class="guide-body card" id="guideBody">读取中…</article></div>`;
+  const body = $("#guideBody");
+  if (cur) return showDoc(body, cur.path);
+  if (q.src) return showSource(body, q.src);
+  return showSourceList(body);
+};
+async function showDoc(body, path) {
+  const d = await GET(`/api/guide/doc${qstr({ path })}`);
+  const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  const srcSet = new Set(guideState.sources.map((s) => s.path));
+  const docSet = new Set(guideState.docs.map((s) => s.path));
+  const r = MD.render(d.text, {
+    link(href) {
+      if (/^(https?:|mailto:)/i.test(href)) return { href, attrs: ' target="_blank" rel="noopener"' };
+      if (href.startsWith("#")) return { href: "#", attrs: ` data-anchor="${MD.escape(decodeURIComponent(href.slice(1)))}"` };
+      let p = href.split("#")[0];
+      try { p = decodeURIComponent(p); } catch (e) { /* 保留原样 */ }
+      const full = normPath(dir, p);
+      if (docSet.has(full)) return { href: guideHref({ doc: full }), attrs: "" };
+      if (srcSet.has(full)) return { href: guideHref({ src: full }), attrs: "" };
+      if (full.startsWith("docs/")) return { href: `/guide-file/${encodeURI(full)}`, attrs: ' target="_blank"' };
+      return { href: guideHref({ view: "source" }), attrs: ` title="${MD.escape(full)}"` };
+    },
+    image(src) {
+      if (/^(https?:|data:)/i.test(src)) return src;
+      return `/guide-file/${encodeURI(normPath(dir, src))}`;
+    },
+  });
+  body.innerHTML = `<div class="doc-path muted">${esc(path)}</div><div class="md">${r.html}</div>`;
+  $$("[data-anchor]", body).forEach((a) => a.addEventListener("click", (e) => {
+    e.preventDefault();
+    const t = document.getElementById(a.dataset.anchor) || $$("h1,h2,h3,h4", body).find((h) => h.textContent.trim() === a.dataset.anchor);
+    if (t) t.scrollIntoView({ behavior: "smooth" });
+  }));
+}
+function showSourceList(body) {
+  const total = guideState.sources.reduce((s, f) => s + f.lines, 0);
+  body.innerHTML = `<div class="card-head"><h2 style="margin:0">全部手写源码</h2><a class="btn" href="/api/guide/source.zip" download>下载全部源码（zip）</a></div>
+    <p class="hint">共 ${guideState.sources.length} 个文件、${total} 行。只包含本应用自己写的代码，不含第三方库、生成文件和运行数据。点文件名在应用内只读查看。</p>
+    <div class="md-table"><table><thead><tr><th>文件</th><th>职责</th><th style="text-align:right">行数</th></tr></thead><tbody>
+    ${guideState.sources.map((f) => `<tr><td><a href="${guideHref({ src: f.path })}"><code>${esc(f.path)}</code></a></td><td>${esc(f.role || "")}</td><td class="num" style="text-align:right">${f.lines}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+async function showSource(body, path) {
+  let d;
+  try { d = await GET(`/api/guide/source${qstr({ path })}`); } catch (e) {
+    body.innerHTML = `<div class="empty">无法打开：${esc(e.message)}</div>`;
+    return;
+  }
+  const info = guideState.sources.find((f) => f.path === path) || {};
+  const lines = d.text.replace(/\n$/, "").split("\n");
+  body.innerHTML = `<div class="card-head"><div><a href="${guideHref({ view: "source" })}">← 全部源码</a> <code style="margin-left:8px">${esc(path)}</code></div><span class="muted">${lines.length} 行 · 只读</span></div>
+    ${info.role ? `<p class="hint">${esc(info.role)}</p>` : ""}
+    <div class="code-view"><table>${lines.map((l, i) => `<tr><td class="ln">${i + 1}</td><td class="lc">${esc(l) || " "}</td></tr>`).join("")}</table></div>`;
+}
+
 // ------------------------------------------------------------------ 页面：设置
 const SETTINGS_SPEC = [
   ["启动与退出", [
-    ["auto_exit", "bool", "关闭页面后自动退出后台", "关掉后，可以只开着后台持续采集；需要时再打开页面或在页面点“退出”。"],
-    ["exit_grace_sec", "number", "退出前等待（秒）", "所有页面断开超过这个时间才退出，留给刷新页面的时间。"],
+    ["exit_grace_sec", "number", "退出前等待（秒）", "关闭窗口后，后台和采集在这么多秒后停止（留给刷新页面的时间）。本版本不提供关窗后继续在后台采集的常驻模式。"],
     ["browser", "select", "打开页面用", "", [["auto", "自动（优先 Edge，其次 Chrome）"], ["edge", "Microsoft Edge"], ["chrome", "Google Chrome"], ["default", "系统默认浏览器"], ["none", "不自动打开"]]],
     ["app_window", "bool", "使用独立应用窗口", "像桌面程序一样单独一个窗口，没有地址栏，关掉窗口即退出。下次启动生效。"],
   ]],
@@ -785,6 +938,7 @@ function showShutdown(reason) {
 // ------------------------------------------------------------------ 启动
 async function init() {
   applyTheme();
+  initZoom();
   $("#btnTheme").onclick = () => {
     const dark = document.documentElement.dataset.theme
       ? document.documentElement.dataset.theme === "dark"
@@ -811,13 +965,12 @@ async function init() {
   state.settings = state.boot.settings;
   applyColors();
   $("#navFoot").textContent = `v${state.boot.version} · 本机运行`;
+  $("#topVer").textContent = `v${state.boot.version}`;
   GET("/api/overview?days=3").then((d) => setUnread(d.overview.unread_alerts)).catch(() => {});
   GET("/api/sources").then((s) => (state.sources = s)).catch(() => {});
   connect();
   window.addEventListener("hashchange", route);
-  window.addEventListener("resize", debounce(() => {
-    if (state.page === "overview" && state.ovData) drawTrend($("#chBars"), $("#chLine"), state.ovData.trend);
-  }, 200));
+  window.addEventListener("resize", debounce(redrawCharts, 200));
   route();
 }
 init();

@@ -310,6 +310,46 @@ class ServerTest(unittest.TestCase):
         st, _ = self.req("/../../etc/passwd")
         self.assertEqual(st, 404)
 
+    def test_guide_docs_and_sources(self):
+        import io
+        import zipfile
+
+        st, body = self.req("/api/guide/docs")
+        docs = [d["path"] for d in json.loads(body)["docs"]]
+        expected = ["README.md"] + sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "docs").rglob("*.md"))
+        self.assertEqual(sorted(docs), sorted(expected))  # 应用内文档覆盖 README + docs/ 全部 .md
+        for d in docs:
+            st, body = self.req("/api/guide/doc?path=" + urllib.parse.quote(d))
+            self.assertEqual(st, 200, d)
+            self.assertEqual(json.loads(body)["text"], (ROOT / d).read_text(encoding="utf-8"))
+        for bad in ("../run.py", "docs/../run.py", "monitor/server.py", "/etc/passwd", "..%2F..%2Fetc%2Fpasswd"):
+            st, _ = self.req("/api/guide/doc?path=" + urllib.parse.quote(bad))
+            self.assertEqual(st, 404, bad)
+        st, body = self.req("/api/guide/sources")
+        files = [f["path"] for f in json.loads(body)["files"]]
+        for must in ("run.py", "monitor/server.py", "monitor/guide.py", "monitor/web/app.js", "monitor/web/markdown.js", "tests/test_monitor.py"):
+            self.assertIn(must, files)
+        self.assertFalse(any("__pycache__" in f or f.endswith(".db") for f in files))
+        st, body = self.req("/api/guide/source?path=monitor/server.py")
+        self.assertEqual(json.loads(body)["text"], (ROOT / "monitor/server.py").read_text(encoding="utf-8"))
+        for bad in ("../README.md", "monitor/../../etc/passwd", "/etc/passwd", "docs/ARCHITECTURE.md", "monitor/__pycache__/x.pyc"):
+            st, _ = self.req("/api/guide/source?path=" + urllib.parse.quote(bad))
+            self.assertEqual(st, 404, bad)
+        st, body = self.req("/api/guide/source.zip")
+        self.assertEqual(st, 200)
+        names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+        self.assertTrue(any(n.endswith("/monitor/server.py") for n in names))
+        self.assertTrue(any(n.endswith("/README.md") for n in names))
+        st, _ = self.req("/guide-file/../run.py")
+        self.assertEqual(st, 404)
+
+    def test_processes(self):
+        st, body = self.req("/api/processes")
+        d = json.loads(body)
+        self.assertEqual(d["unit"], "MiB")
+        self.assertEqual(d["processes"][0]["pid"], os.getpid())
+        self.assertIsNotNone(d["processes"][0]["mem_mib"])  # Linux 上能读到 RSS
+
     def test_csrf_and_host(self):
         st, _ = self.req("/api/refresh", "POST", {}, headers={"X-Monitor": ""})
         self.assertEqual(st, 403)
@@ -360,8 +400,8 @@ class WatchdogTest(unittest.TestCase):
         bus.unsubscribe(q)
         self.assertEqual(wd.check(time.time() + 1), "")  # 宽限期内（可能是刷新）
         self.assertIn("页面已全部关闭", wd.check(time.time() + 6))
-        cfg["auto_exit"] = False
-        self.assertEqual(wd.check(time.time() + 60), "")
+        cfg["auto_exit"] = False  # 旧设置里关掉了自动退出：也必须退出（不保留常驻后台）
+        self.assertIn("页面已全部关闭", wd.check(time.time() + 60))
 
 
 class LifecycleEndToEndTest(unittest.TestCase):

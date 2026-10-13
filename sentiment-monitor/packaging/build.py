@@ -25,6 +25,31 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 NAME = "SentimentMonitor"
 
+sys.path.insert(0, str(ROOT))
+from monitor.guide import SOURCE_PATTERNS  # noqa: E402
+
+# 「使用指南」：README.md 和 docs/ 全部打进包里（guide/），离线可读
+data = [
+    "--add-data", f"monitor/web{os.pathsep}monitor/web",
+    "--add-data", f"README.md{os.pathsep}guide",
+    "--add-data", f"docs{os.pathsep}guide/docs",
+]
+# 「源码」页：PyInstaller 默认只带 .pyc，这里把手写源码原文件按白名单打进 source/
+src_files = sorted({f.relative_to(ROOT).as_posix() for pat in SOURCE_PATTERNS for f in ROOT.glob(pat)
+                    if f.is_file() and "__pycache__" not in f.parts})
+for rel in src_files:
+    parent = Path(rel).parent.as_posix()
+    data += ["--add-data", f"{rel}{os.pathsep}source/{parent if parent != '.' else '.'}"]
+print("打包源码文件：", len(src_files))
+
+hidden = ["monitor.server", "monitor.demo", "monitor.guide", "monitor.procinfo"]
+try:
+    import psutil  # noqa: F401
+
+    hidden.append("psutil")
+except ImportError:
+    print("提示：未安装 psutil，运行状态页改用系统接口读取内存（Windows 上无法列出窗口子进程）")
+
 PyInstaller.__main__.run([
     "run.py",
     "--name", NAME,
@@ -32,9 +57,8 @@ PyInstaller.__main__.run([
     "--clean",
     "--onedir",
     "--windowed",  # 无控制台：像普通桌面程序一样
-    "--add-data", f"monitor/web{os.pathsep}monitor/web",
-    "--hidden-import", "monitor.server",
-    "--hidden-import", "monitor.demo",
+    *data,
+    *[x for h in hidden for x in ("--hidden-import", h)],
 ])
 
 dist = ROOT / "dist" / NAME
