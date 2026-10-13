@@ -50,6 +50,7 @@ def setup_logging(directory) -> None:
     if sys.stderr:
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", handlers=handlers, force=True)
+    logging.getLogger("tornado.access").setLevel(logging.WARNING)   # 每个请求一行太吵，只记错误
 
 
 def focus_existing(rec: dict) -> bool:

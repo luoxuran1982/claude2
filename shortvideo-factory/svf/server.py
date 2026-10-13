@@ -316,7 +316,7 @@ class ProxyHandler(Base):
             self.clear_header("Server")
             for k, v in h.get_all():
                 kl = k.lower()
-                if kl in HOP_BY_HOP or (meta["html"] and kl in ("content-length", "content-encoding")):
+                if kl in HOP_BY_HOP or kl in ("date", "server") or (meta["html"] and kl in ("content-length", "content-encoding")):
                     continue
                 self.add_header(k, v)
 

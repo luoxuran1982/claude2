@@ -1,0 +1,4 @@
+/* 由本机服务插入到上游 Streamlit 页面（/app/）。只做外壳需要的最小调整，不改上游业务样式。 */
+html { -webkit-text-size-adjust: 100%; }
+/* 嵌在外壳窗口里时，上游页面顶部留白再收一点，和外壳顶栏衔接 */
+div[data-testid="stMainBlockContainer"] { padding-top: 0.25rem !important; }
