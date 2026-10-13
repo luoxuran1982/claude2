@@ -1,0 +1,59 @@
+name: 发布安装包
+
+# 把某次已经通过的构建产物原样发布到 Releases（不重新构建，只在 Linux 上跑一分钟左右）。
+# 每个应用一条 Release，标签按交付要求写成 <项目目录>-v<版本>。
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "已通过的构建运行 ID（Actions 页面网址里的数字）"
+        required: true
+      tag:
+        description: "版本标签，如 quant-lab-v1.2.0"
+        required: true
+      title:
+        description: "Release 标题，如 QuantLab 量化学习实验室 1.2.0"
+        required: true
+      notes:
+        description: "下载和安装说明"
+        required: true
+      target:
+        description: "标签指向的提交（留空 = 那次构建的提交）。应用代码相同、只差工作流文件时，可指向本分支最新提交"
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ inputs.run_id }}
+      TAG: ${{ inputs.tag }}
+      TITLE: ${{ inputs.title }}
+      NOTES: ${{ inputs.notes }}
+      TARGET: ${{ inputs.target }}
+    steps:
+      - name: 下载那次构建的产物
+        run: |
+          set -euo pipefail
+          sha=$(gh run view "$RUN_ID" --json headSha,conclusion -q 'select(.conclusion=="success") | .headSha')
+          [ -n "$sha" ] || { echo "运行 $RUN_ID 没有成功，不发布"; exit 1; }
+          echo "SHA=${TARGET:-$sha}" >> "$GITHUB_ENV"
+          gh run download "$RUN_ID" -D artifacts
+          mkdir release
+          for d in artifacts/*/; do
+            name=$(basename "$d")
+            if find "$d" -mindepth 1 -type d | grep -q .; then
+              # 免安装文件夹：整个打成 zip
+              (cd artifacts && zip -qr "../release/$name.zip" "$name")
+            else
+              cp "$d"* release/
+            fi
+          done
+          ls -la release
+      - name: 发布
+        run: gh release create "$TAG" release/* --target "$SHA" --title "$TITLE" --notes "$NOTES"
