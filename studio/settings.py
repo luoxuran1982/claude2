@@ -11,8 +11,8 @@ DEFAULT_SETTINGS = {
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-flash",
         "temperature": 0.7,
-        "max_tokens": 8000,
-        "timeout": 240,
+        "max_tokens": 32000,
+        "timeout": 600,
         "json_mode": True,
         # 元/百万 token，只用于在界面上估算花费
         "price_input": 2.0,

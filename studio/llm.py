@@ -22,6 +22,29 @@ class LLMError(RuntimeError):
     pass
 
 
+DEFAULT_MAX_TOKENS = 32000
+
+# 服务商在 400 错误里给出的 max_tokens 上限，例如：
+#   DeepSeek：Invalid max_tokens value, the valid range of max_tokens is [1, 393216]
+#   OpenAI：max_tokens is too large: 1000000. This model supports at most 16384 completion tokens
+_MAX_TOKENS_LIMIT = [
+    re.compile(r"\[\s*\d+\s*,\s*(\d+)\s*\]"),
+    re.compile(r"at most\s+(\d+)", re.I),
+    re.compile(r"(?:<=|less than or equal to)\s*(\d+)", re.I),
+]
+
+
+def max_tokens_limit(msg):
+    """从服务商的错误信息里读出 max_tokens 上限；不是这类错误就返回 None。"""
+    if "max_tokens" not in (msg or "").lower():
+        return None
+    for pat in _MAX_TOKENS_LIMIT:
+        m = pat.search(msg)
+        if m:
+            return int(m.group(1))
+    return None
+
+
 PRESETS = [
     {"name": "DeepSeek", "base_url": "https://api.deepseek.com", "model": "deepseek-flash"},
     {"name": "硅基流动", "base_url": "https://api.siliconflow.cn/v1", "model": "deepseek-ai/DeepSeek-V3"},
@@ -71,21 +94,29 @@ def chat(messages, cfg, api_key, json_mode=True, use_cache=True, max_tokens=None
         "model": cfg.get("model"),
         "messages": messages,
         "temperature": float(cfg.get("temperature", 0.7)),
-        "max_tokens": int(max_tokens or cfg.get("max_tokens") or 8000),
+        "max_tokens": int(max_tokens or cfg.get("max_tokens") or DEFAULT_MAX_TOKENS),
         "stream": False,
     }
     if json_mode and cfg.get("json_mode", True):
         body["response_format"] = {"type": "json_object"}
 
-    data = _post(_endpoint(cfg.get("base_url")), body, api_key, int(cfg.get("timeout") or 240), cancel)
+    # 思考型模型写长稿要几分钟；旧设置里存的是 240 秒，这里至少等 600 秒
+    timeout = max(int(cfg.get("timeout") or 0), 600)
+    data, sent_max = _post(_endpoint(cfg.get("base_url")), body, api_key, timeout, cancel)
     try:
         choice = data["choices"][0]
         text = choice["message"].get("content") or ""
     except (KeyError, IndexError, TypeError):
         raise LLMError("模型返回格式不对：" + json.dumps(data, ensure_ascii=False)[:300])
-    if choice.get("finish_reason") == "length":
-        raise LLMError("模型输出被截断（达到 max_tokens）。请调大设置里的最大输出，或缩短目标时长。")
     u = data.get("usage") or {}
+    if choice.get("finish_reason") == "length":
+        used = int(u.get("completion_tokens") or 0)
+        think = int((u.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0)
+        detail = f"这次最大输出 {sent_max} token，模型实际输出 {used}" + (f"，其中思考过程占了 {think}" if think else "")
+        raise LLMError(
+            f"模型输出被截断（达到最大输出 token）：{detail}。思考型模型（如 deepseek-flash）先思考再写稿，思考也算在最大输出里。"
+            "请把「设置 → 最大输出 token」调大（例如 32000；填得比服务商上限还大也没关系，会自动降到上限），或缩短目标时长。"
+        )
     usage = {
         "model": data.get("model") or cfg.get("model"),
         "prompt_tokens": int(u.get("prompt_tokens") or 0),
@@ -94,26 +125,36 @@ def chat(messages, cfg, api_key, json_mode=True, use_cache=True, max_tokens=None
         "cache_hit_tokens": int(u.get("prompt_cache_hit_tokens") or (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0),
         "local_cache": False,
     }
+    if sent_max < body["max_tokens"]:
+        usage["note"] = f"最大输出 {body['max_tokens']} 超过服务商上限，已按上限 {sent_max} 请求"
     write_json(_cache_path(key), {"text": text, "usage": usage, "time": time.time()})
     return text, usage
 
 
 def _post(url, body, api_key, timeout, cancel):
+    """返回 (响应 JSON, 实际请求用的 max_tokens)。"""
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     last_err = None
     tried_without_json = False
+    clamped = False
     for attempt in range(4):
         if cancel is not None and cancel.is_set():
             raise LLMError("已取消")
         req = urllib.request.Request(url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), headers=headers, method="POST")
         try:
             with urlopen(req, timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                return json.loads(resp.read().decode("utf-8")), body.get("max_tokens")
         except urllib.error.HTTPError as e:
             msg = e.read().decode("utf-8", "replace")[:500]
-            if e.code == 400 and "response_format" in body and not tried_without_json:
+            limit = max_tokens_limit(msg) if e.code == 400 else None
+            if limit and not clamped and int(body.get("max_tokens") or 0) > limit:
+                # 最大输出填得比服务商上限还大：按错误信息里给的上限再请求一次
+                body = {**body, "max_tokens": limit}
+                clamped = True
+                continue
+            if e.code == 400 and "response_format" in body and not tried_without_json and "max_tokens" not in msg.lower():
                 # 有的服务商不支持 JSON 模式，去掉再试一次
                 body = {k: v for k, v in body.items() if k != "response_format"}
                 tried_without_json = True
@@ -128,7 +169,10 @@ def _post(url, body, api_key, timeout, cancel):
         except urllib.error.URLError as e:
             last_err = LLMError(f"连接模型接口失败：{e.reason}")
             time.sleep(2 * (attempt + 1))
-        except (TimeoutError, OSError) as e:
+        except TimeoutError:
+            # 请求已经发出去了，模型可能在服务商那边写完并计费；不自动重试，免得重复花钱
+            raise LLMError(f"等了 {timeout} 秒模型还没写完。可以缩短目标时长后再试，或稍后重新生成。")
+        except OSError as e:
             last_err = LLMError(f"模型接口超时或网络错误：{e}")
             time.sleep(2 * (attempt + 1))
         except json.JSONDecodeError:

@@ -116,7 +116,8 @@ def apply_generation(p, result):
 def _usage_line(u):
     if u.get("local_cache"):
         return "命中本地缓存，没有产生费用"
-    return f"模型 {u.get('model')}：输入 {u['prompt_tokens']}（缓存命中 {u['cache_hit_tokens']}），输出 {u['completion_tokens']} token"
+    line = f"模型 {u.get('model')}：输入 {u['prompt_tokens']}（缓存命中 {u['cache_hit_tokens']}），输出 {u['completion_tokens']} token"
+    return line + (f"；{u['note']}" if u.get("note") else "")
 
 
 def rewrite_scene(pid, scene_id, instruction, ctx):

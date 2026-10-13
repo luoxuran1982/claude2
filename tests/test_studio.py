@@ -145,6 +145,74 @@ class VisualTests(unittest.TestCase):
         self.assertEqual(plan[0][1], 2)  # 口播提到或门 → 直接强调第 3 条
 
 
+class LimitLLM(BaseHTTPRequestHandler):
+    """模拟 DeepSeek：max_tokens 超过上限返回 400；mode="length" 时返回被截断的结果。"""
+
+    LIMIT = 393216
+    mode = "ok"
+    calls = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        LimitLLM.calls.append(body)
+        if body["max_tokens"] > self.LIMIT:
+            status, resp = 400, {"error": {"message": f"Invalid max_tokens value, the valid range of max_tokens is [1, {self.LIMIT}]", "type": "invalid_request_error"}}
+        elif LimitLLM.mode == "length":
+            status, resp = 200, {
+                "choices": [{"message": {"content": '{"title": "半'}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 2000, "completion_tokens": 8000, "completion_tokens_details": {"reasoning_tokens": 6500}},
+            }
+        else:
+            status, resp = 200, {"choices": [{"message": {"content": '{"ok": 1}'}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+        data = json.dumps(resp).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class LLMLimitTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), LimitLLM)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.cfg = {"base_url": f"http://127.0.0.1:{cls.srv.server_port}/v1", "model": "deepseek-flash", "temperature": 0.7}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def setUp(self):
+        LimitLLM.calls, LimitLLM.mode = [], "ok"
+
+    def test_too_large_max_tokens_is_lowered_to_provider_limit(self):
+        msgs = [{"role": "user", "content": "上限测试"}]
+        text, usage = llm.chat(msgs, {**self.cfg, "max_tokens": 1000000}, "k", use_cache=False)
+        self.assertEqual(text, '{"ok": 1}')
+        self.assertEqual([c["max_tokens"] for c in LimitLLM.calls], [1000000, 393216])
+        self.assertIn("response_format", LimitLLM.calls[1])  # 不该误把 JSON 模式关掉
+        self.assertIn("393216", usage["note"])
+
+    def test_truncation_reports_token_numbers_and_is_not_cached(self):
+        LimitLLM.mode = "length"
+        msgs = [{"role": "user", "content": "截断测试"}]
+        for _ in range(2):
+            with self.assertRaises(llm.LLMError) as cm:
+                llm.chat(msgs, {**self.cfg, "max_tokens": 8000}, "k")
+            self.assertIn("8000", str(cm.exception))
+            self.assertIn("6500", str(cm.exception))
+        self.assertEqual(len(LimitLLM.calls), 2)  # 第二次没有命中缓存，真的重新请求了
+
+    def test_parses_limits_from_common_error_messages(self):
+        self.assertEqual(llm.max_tokens_limit("the valid range of max_tokens is [1, 393216]"), 393216)
+        self.assertEqual(llm.max_tokens_limit("max_tokens is too large: 1000000. This model supports at most 16384 completion tokens"), 16384)
+        self.assertIsNone(llm.max_tokens_limit("response_format is not supported"))
+
+
 class ComplianceTests(unittest.TestCase):
     def test_flags_stock_code_and_advice(self):
         p = proj.normalize_project({"id": "x1234", "brief": {"views": "我的看法"}, "scenes": [
