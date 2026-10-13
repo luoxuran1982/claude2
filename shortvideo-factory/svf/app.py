@@ -53,6 +53,22 @@ def setup_logging(directory) -> None:
     logging.getLogger("tornado.access").setLevel(logging.WARNING)   # 每个请求一行太吵，只记错误
 
 
+def clear_quarantine() -> None:
+    """macOS：从网上下载的 .dmg 里拷出来的文件带「隔离」标记。随包 Python 是另起的可执行文件，
+    带着标记可能被 Gatekeeper 拦下。用户已经在「打开」时确认过本应用，这里把随包部件的标记去掉（尽力而为，失败只记日志）。"""
+    if sys.platform != "darwin" or not paths.is_frozen():
+        return
+    import subprocess
+    payload = paths.payload_dir()
+    try:
+        probe = subprocess.run(["xattr", "-p", "com.apple.quarantine", str(paths.runtime_python())], capture_output=True)
+        if probe.returncode == 0:
+            r = subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(payload)], capture_output=True, timeout=120)
+            log.info("已去掉随包部件的隔离标记（返回码 %s）", r.returncode)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("去隔离标记失败：%s（如生成界面起不来，见使用指南「出了问题怎么办」）", exc)
+
+
 def focus_existing(rec: dict) -> bool:
     """已有一个实例在运行：请它把窗口调到前面，然后本次启动直接退出。"""
     try:
@@ -154,6 +170,7 @@ class Shell:
         elif stale:
             log.warning(stale)
 
+        clear_quarantine()
         upstream = paths.upstream_dir()
         prep = userdata.prepare(self.data, upstream, paths.bundled_fonts_dir())
         log.info("用户数据已就绪：%s", prep)

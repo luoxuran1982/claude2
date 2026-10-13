@@ -1,0 +1,155 @@
+# 本项目对上游 MoneyPrinterTurbo（commit bbe7eb9）的改动，由 packaging/upstream_diff.py 生成。
+# 改动的文件：app/config/config.py、app/utils/utils.py、webui/Main.py、webui/i18n/zh.json
+--- a/app/config/config.py
++++ b/app/config/config.py
+@@ -13,7 +13,8 @@
+ from app import __version__
+ 
+ root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+-config_file = f"{root_dir}/config.toml"
++# [AI 短视频工厂补丁 P1] 桌面版把配置放在用户数据目录（安装目录只读），由启动器通过环境变量指定。
++config_file = os.environ.get("MPT_CONFIG_FILE") or f"{root_dir}/config.toml"
+ _CONTAINER_CGROUP_MARKERS = ("docker", "containerd", "kubepods", "libpod", "podman")
+ _DOCKER_HOST_GATEWAY_NAME = "host.docker.internal"
+ _config_save_lock = threading.RLock()
+@@ -580,7 +581,7 @@
+             fd, temp_path = tempfile.mkstemp(
+                 prefix=".config-",
+                 suffix=".toml.tmp",
+-                dir=root_dir,
++                dir=os.path.dirname(os.path.abspath(config_file)),  # [补丁 P1] 临时文件与配置文件同目录
+             )
+             with os.fdopen(fd, mode="w", encoding="utf-8") as f:
+                 f.write(serialized_config)
+--- a/app/utils/utils.py
++++ b/app/utils/utils.py
+@@ -91,7 +91,8 @@
+ 
+ 
+ def storage_dir(sub_dir: str = "", create: bool = False):
+-    d = os.path.join(root_dir(), "storage")
++    # [AI 短视频工厂补丁 P2] 桌面版把任务、缓存放在用户数据目录，由启动器通过环境变量指定。
++    d = os.environ.get("MPT_STORAGE_DIR") or os.path.join(root_dir(), "storage")
+     if sub_dir:
+         d = os.path.join(d, sub_dir)
+     if create:
+@@ -116,7 +117,8 @@
+ 
+ 
+ def font_dir(sub_dir: str = ""):
+-    d = resource_dir("fonts")
++    # [补丁 P2] 字体目录可由启动器指定（用户数据目录下的 fonts/，用户可自行放字体）
++    d = os.environ.get("MPT_FONT_DIR") or resource_dir("fonts")
+     if sub_dir:
+         d = os.path.join(d, sub_dir)
+     os.makedirs(d, exist_ok=True)
+@@ -124,7 +126,8 @@
+ 
+ 
+ def song_dir(sub_dir: str = ""):
+-    d = resource_dir("songs")
++    # [补丁 P2] 背景音乐目录可由启动器指定（用户数据目录下的 songs/）
++    d = os.environ.get("MPT_SONG_DIR") or resource_dir("songs")
+     if sub_dir:
+         d = os.path.join(d, sub_dir)
+     os.makedirs(d, exist_ok=True)
+--- a/webui/Main.py
++++ b/webui/Main.py
+@@ -91,8 +91,9 @@
+ streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
+ st.markdown(streamlit_style, unsafe_allow_html=True)
+ # 定义资源目录
+-font_dir = os.path.join(root_dir, "resource", "fonts")
+-song_dir = os.path.join(root_dir, "resource", "songs")
++# [AI 短视频工厂补丁 P3] 与 app/utils/utils.py 共用字体、背景音乐目录（桌面版指向用户数据目录）
++font_dir = utils.font_dir()
++song_dir = utils.song_dir()
+ i18n_dir = os.path.join(root_dir, "webui", "i18n")
+ config_file = os.path.join(root_dir, "webui", ".streamlit", "webui.toml")
+ # 语言列表必须在会话状态初始化前可用，首次访问时才能把浏览器 locale 映射到
+@@ -191,7 +192,8 @@
+ )
+ DEFAULT_SUBTITLE_SETTINGS = {
+     "subtitle_enabled": True,
+-    "font_name": "MicrosoftYaHeiBold.ttc",
++    # [补丁 P3] 微软雅黑是商业字体，桌面版不随包分发；默认改用 OFL 开源的思源黑体（Noto Sans SC）
++    "font_name": os.environ.get("MPT_DEFAULT_FONT") or "MicrosoftYaHeiBold.ttc",
+     "subtitle_position": "bottom",
+     "subtitle_display_mode": "sentence",
+     "subtitle_animation": "none",
+@@ -1901,7 +1903,7 @@
+         # 通过路径拼接访问任务目录之外的位置，也避免后续打开目录时触发
+         # 平台 shell 对特殊字符的解释。
+         normalized_task_id = str(UUID(str(task_id)))
+-        tasks_root = os.path.abspath(os.path.join(root_dir, "storage", "tasks"))
++        tasks_root = os.path.abspath(utils.task_dir())  # [补丁 P3] 任务目录跟随 MPT_STORAGE_DIR
+         path = os.path.abspath(os.path.join(tasks_root, normalized_task_id))
+ 
+         # 即使 UUID 校验通过，也再次确认最终路径仍在任务根目录内，避免
+--- a/webui/i18n/zh.json
++++ b/webui/i18n/zh.json
+@@ -248,8 +248,8 @@
+     "llm_provider_label.onomeo": "onomeo",
+     "llm_provider_tips.onomeo": "##### onomeo 配置说明\n- **API Key**: 登录后在 [onomeo]({api_key_url}) 创建 API Key\n- **Base Url**: 默认 `{default_base_url}`\n- **Model Name**: 默认 `{default_model}`，会自动选择可用的免费模型；其它模型 ID 可在 [模型列表]({model_docs_url}) 查看\n\nonomeo 是兼容 OpenAI 接口的网关。免费模型有调用频率限制，其它模型按预付余额计费。",
+     "API Key": "API Key",
+-    "Base Url": "Base Url",
+-    "Account ID": "Account ID",
++    "Base Url": "接口地址（Base URL）",
++    "Account ID": "账号 ID（Account ID）",
+     "Model Name": "模型名称",
+     "Groq Model List Load Failed": "暂时无法加载 Groq 模型列表。你仍然可以手动输入模型名称，生成时会再进行校验。",
+     "Groq API Key Required for Model List": "填写 Groq API Key 后，可以自动加载可用模型列表。",
+@@ -288,8 +288,8 @@
+     "Gemini API Key": "Google Gemini API 密钥（[点击获取](https://aistudio.google.com/app/apikey)）",
+     "MiMo API Key": "小米 MiMo API 密钥（[点击获取](https://mimo.mi.com/docs/zh-CN/quick-start/first-api-call)）",
+     "MiniMax TTS API Key": "MiniMax TTS API 密钥（[中国站](https://platform.minimaxi.com/user-center/basic-information/interface-key) / [国际站](https://platform.minimax.io/user-center/basic-information/interface-key)）",
+-    "MiniMax TTS Endpoint": "MiniMax TTS Endpoint",
+-    "MiniMax TTS Model": "MiniMax TTS Model",
++    "MiniMax TTS Endpoint": "MiniMax TTS 接口地址",
++    "MiniMax TTS Model": "MiniMax TTS 模型",
+     "Load MiniMax Voices": "获取音色",
+     "MiniMax Voices Loaded": "已获取 {count} 个可用音色。",
+     "MiniMax Voices Load Failed": "获取音色失败：{error}",
+@@ -300,7 +300,7 @@
+     "VoxCPM API Key": "ModelBest API 密钥（[点击获取](https://platform.modelbest.cn/console/keys)）",
+     "VoxCPM Model ID": "VoxCPM 模型 ID",
+     "VoxCPM Model ID Placeholder": "在 ModelBest 中选择支持 speech_synthesis 的模型 ID",
+-    "VoxCPM Base URL": "VoxCPM Base URL",
++    "VoxCPM Base URL": "VoxCPM 接口地址",
+     "VoxCPM Reference Audio": "VoxCPM 参考音频（可选）",
+     "VoxCPM Reference Audio Help": "上传一段短参考音频，用于在本次 VoxCPM 请求中复刻音色。上传文件最大 20 MiB，转换后的 WAV 最大 5 MiB。",
+     "VoxCPM Reference Audio Notice": "该音频会发送给 ModelBest 用于音色复刻。请仅使用自己的声音或已获得授权的声音。音频仅保留在当前浏览器会话和任务中。",
+@@ -328,13 +328,13 @@
+     "VoxCPM Prompt Text Required": "请填写当前示范音频中实际说出的准确逐字稿。",
+     "VoxCPM Prompt Pair Required": "节奏与情绪示范音频和准确逐字稿必须同时提供。",
+     "VoxCPM Prompt Invalid": "节奏与情绪延续无法使用：{error}",
+-    "Chatterbox Base URL": "Chatterbox Base URL",
++    "Chatterbox Base URL": "Chatterbox 接口地址",
+     "Chatterbox API Key": "Chatterbox API 密钥（可选，[查看配置](https://github.com/travisvn/chatterbox-tts-api)）",
+     "Chatterbox Model": "Chatterbox 模型",
+     "Chatterbox Voices": "Chatterbox 音色",
+     "Chatterbox Base URL Placeholder": "http://localhost:4123/v1",
+     "Chatterbox Voices Placeholder": "default-Female, narrator-Male",
+-    "Kokoro Base URL": "Kokoro Base URL",
++    "Kokoro Base URL": "Kokoro 接口地址",
+     "Kokoro API Key": "Kokoro API 密钥（可选，[查看配置](https://github.com/remsky/Kokoro-FastAPI)）",
+     "Kokoro Model": "Kokoro 模型",
+     "Kokoro Voices": "Kokoro 音色",
+@@ -559,7 +559,7 @@
+     "OFox AI Video Help": "一个 Key，畅用多模型视频创作，官方渠道接入，按需付费，稳定高速不限量。",
+     "OFox API Key": "OFox API Key（[获取 API Key](https://ofox.ai/?utm_source=github&utm_medium=sponsorship&utm_content=moneyprinterturbo)）",
+     "OFox Text-to-Video Model": "OFox 文生视频模型",
+-    "OFox Base URL": "OFox Base URL",
++    "OFox Base URL": "OFox 接口地址",
+     "Please Enter the OFox API Key": "请输入 **OFox API Key**",
+     "OFox Billing Notice": "每段生成视频都会由 OFox 计费。根据预计配音时长和片段时长，将提交约 {min}-{max} 个付费任务；凑够所需素材后会立即停止。",
+     "OFox Billing Notice Without Script": "每段生成视频都会由 OFox 计费。填写或生成视频文案后可查看预计任务数量。",
+@@ -575,7 +575,7 @@
+     "MuAPI AI Video Help": "通过 MuAPI 异步文生视频接口付费生成 AI 视频素材，并复用现有的配音、字幕和剪辑流程。",
+     "MuAPI API Key": "MuAPI API Key（[获取 API Key](https://muapi.ai)）",
+     "MuAPI API Key Help": "创建 MuAPI API Key 并妥善保管。MuAPI 按实际提交的任务计费。",
+-    "MuAPI Base URL": "MuAPI Base URL",
++    "MuAPI Base URL": "MuAPI 接口地址",
+     "MuAPI Base URL Help": "MuAPI 请求使用的 API 根地址，默认值为 https://api.muapi.ai/api/v1。",
+     "MuAPI Video Endpoint": "MuAPI 视频 Endpoint",
+     "MuAPI Video Endpoint Help": "MuAPI Base URL 下的异步文生视频相对路径，例如 seedance-lite-t2v。",
