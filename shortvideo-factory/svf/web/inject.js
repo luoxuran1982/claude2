@@ -38,6 +38,8 @@
     "Browse files": "选择文件",
     "Browse file": "选择文件",
     "Upload": "上传",
+    "Add files": "添加文件",
+    "Add file": "添加文件",
     "Choose an option": "请选择",
     "Choose options": "请选择",
     "Select...": "请选择…",

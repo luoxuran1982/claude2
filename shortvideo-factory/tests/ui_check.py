@@ -249,6 +249,10 @@ def run_guide(page, shots: Path, base: str):
         path = key[4:]
         src = page.request.get(base + "/api/guide/doc?path=" + path).text()
         text_len = page.evaluate("document.querySelector('.md').innerText.length")
+        # 图片是懒加载的：逐张滚到可视范围，等它载入
+        for i in range(page.locator(".md img").count()):
+            page.locator(".md img").nth(i).scroll_into_view_if_needed()
+            page.wait_for_timeout(500)
         imgs = page.evaluate("[...document.querySelectorAll('.md img')].map(i => [i.getAttribute('src'), i.complete && i.naturalWidth > 0])")
         headings = page.evaluate("document.querySelectorAll('.md h2, .md h3').length")
         bad_imgs = [i for i in imgs if not i[1]]
