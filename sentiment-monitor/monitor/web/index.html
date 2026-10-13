@@ -19,6 +19,8 @@
     <a href="#/entities" data-page="entities">监控对象</a>
     <a href="#/sources" data-page="sources">数据源</a>
     <a href="#/alerts" data-page="alerts">预警中心 <b class="badge" id="navAlertBadge" hidden></b></a>
+    <a href="#/status" data-page="status">运行状态</a>
+    <a href="#/guide" data-page="guide">使用指南</a>
     <a href="#/settings" data-page="settings">设置</a>
     <div class="nav-foot" id="navFoot"></div>
   </aside>
@@ -26,6 +28,13 @@
     <header class="top">
       <h1 id="pageTitle">总览</h1>
       <div class="top-right">
+        <div class="zoom" role="group" aria-label="界面缩放">
+          <button class="zbtn" id="zoomOut" title="缩小一档（−5%）" aria-label="缩小">−</button>
+          <select id="zoomSel" title="选择界面缩放比例" aria-label="缩放比例"></select>
+          <button class="zbtn" id="zoomIn" title="放大一档（＋5%）" aria-label="放大">＋</button>
+          <button class="zbtn zreset" id="zoomReset" title="恢复 100%">100%</button>
+        </div>
+        <span class="ver muted" id="topVer" title="当前版本"></span>
         <span class="conn" id="conn" title="与后台的实时连接"><i></i><span>连接中</span></span>
         <button class="btn" id="btnRefresh" title="让所有启用的数据源立即抓取一次">立即刷新</button>
         <button class="icon-btn" id="btnTheme" title="切换浅色/深色">◐</button>
@@ -46,6 +55,7 @@
   </div>
 </div>
 <div class="tip" id="tip" hidden></div>
+<script src="/markdown.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

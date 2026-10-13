@@ -102,13 +102,18 @@ def main():
     app.collector.start()
 
     browser = BrowserWindow()
+    app.browser = browser
+    app.browser_mode = "none" if args.no_browser else ""
     app.on_shutdown.append(browser.close)
     watchdog = Watchdog(app.bus, browser, app.store.settings, app.shutdown)
     watchdog.start()
 
     if not args.no_browser:
         cfg = app.store.settings()
-        threading.Timer(0.3, lambda: browser.open(url, cfg["browser"], cfg["app_window"])).start()
+        def open_window():
+            app.browser_mode = browser.open(url, cfg["browser"], cfg["app_window"])
+
+        threading.Timer(0.3, open_window).start()
 
     def on_signal(*_):
         app.shutdown("收到退出信号")

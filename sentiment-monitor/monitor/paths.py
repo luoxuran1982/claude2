@@ -42,3 +42,22 @@ def web_dir() -> Path:
     # PyInstaller 打包后资源在 sys._MEIPASS 下
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     return root / "monitor" / "web"
+
+
+def bundle_root() -> Path:
+    """程序文件所在的根目录：源码运行时是项目目录，打包后是 PyInstaller 解包目录。"""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+
+
+def guide_root() -> Path:
+    """「使用指南」文档根目录：里面有 README.md 和 docs/。打包时放在 guide/ 下。"""
+    if getattr(sys, "frozen", False):
+        return bundle_root() / "guide"
+    return bundle_root()
+
+
+def source_root() -> Path:
+    """应用内「源码」页读取的手写源码根目录。打包时 .py 原文件放在 source/ 下（否则只有 .pyc）。"""
+    if getattr(sys, "frozen", False):
+        return bundle_root() / "source"
+    return bundle_root()

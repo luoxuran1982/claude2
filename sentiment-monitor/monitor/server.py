@@ -14,7 +14,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import APP_ID, APP_NAME, __version__, paths, sources
+from . import APP_ID, APP_NAME, __version__, guide, paths, procinfo, sources
 from .collector import Collector
 from .db import Store
 from .events import EventBus
@@ -46,6 +46,8 @@ class App:
         self.httpd = None
         self.port = 0
         self.on_shutdown = []
+        self.browser = None       # lifecycle.BrowserWindow（run.py 设置）
+        self.browser_mode = ""   # edge/chrome/default/none
         self._stopping = threading.Event()
         self._register()
 
@@ -263,6 +265,38 @@ class App:
             self.store.clear_articles()
             return {"ok": True}
 
+        # ---- 使用指南：文档、源码（白名单）、运行状态
+        @r("GET", "/api/guide/docs")
+        def guide_docs(req):
+            return {"docs": guide.list_docs(), "assets": guide.list_doc_assets()}
+
+        @r("GET", "/api/guide/doc")
+        def guide_doc(req):
+            f = guide.resolve_doc_file(req.qs("path"))
+            if not f or f.suffix.lower() != ".md":
+                raise ApiError(404, "文档不存在")
+            return {"path": req.qs("path"), "text": f.read_text(encoding="utf-8")}
+
+        @r("GET", "/api/guide/sources")
+        def guide_sources(req):
+            return {"files": guide.list_sources(), "version": __version__}
+
+        @r("GET", "/api/guide/source")
+        def guide_source(req):
+            text = guide.read_source(req.qs("path"))
+            if text is None:
+                raise ApiError(404, "不在本应用源码白名单内")
+            return {"path": req.qs("path"), "text": text}
+
+        @r("GET", "/api/guide/source.zip")
+        def guide_zip(req):
+            fname = f"sentiment-monitor-{__version__}-source.zip"
+            return Raw(guide.source_zip(__version__), "application/zip", {"Content-Disposition": f'attachment; filename="{fname}"'})
+
+        @r("GET", "/api/processes")
+        def processes(req):
+            return procinfo.snapshot(self.browser, self.browser_mode)
+
         @r("POST", "/api/shutdown")
         def shutdown(req):
             self.shutdown("在页面点了退出")
@@ -379,6 +413,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def _static(self, path):
+        if path.startswith("/guide-file/"):
+            f = guide.resolve_doc_file(urllib.parse.unquote(path[len("/guide-file/"):]))
+            if not f:
+                return self._json(404, {"error": "not found"})
+            ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
+            if ctype.startswith("text/"):
+                ctype += "; charset=utf-8"
+            return self._send(200, f.read_bytes(), ctype)
         if path in ("", "/"):
             path = "/index.html"
         root = paths.web_dir().resolve()
