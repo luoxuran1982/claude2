@@ -95,8 +95,9 @@ def rewrite_links(text: str, src: str, ref: str, copied: set[str]) -> str:
         if line.lstrip().startswith("```"):
             fenced = not fenced
         if not fenced:
-            # 行内代码 `...` 里的示例链接不改
-            line = "".join(p if p.startswith("`") else LINK.sub(fix, p) for p in re.split(r"(`[^`]*`)", line))
+            # 行内代码 `...` 里的示例链接不改；链接文字本身是代码（[`run.py`](../run.py)）的照常改
+            spans = [m.span() for m in re.finditer(r"`[^`]*`", line)]
+            line = LINK.sub(lambda m: m.group(0) if any(a <= m.start() < b for a, b in spans) else fix(m), line)
         out.append(line)
     return "\n".join(out)
 
