@@ -83,7 +83,14 @@ jobs:
       - name: Install NSIS
         if: runner.os == 'Windows'
         shell: pwsh
-        run: choco install nsis -y --no-progress
+        # 社区源偶尔连不上：重试几次，装不上就让这一步失败
+        run: |
+          for ($i = 1; $i -le 4; $i++) {
+            choco install nsis -y --no-progress
+            if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { exit 0 }
+            Start-Sleep -Seconds (15 * $i)
+          }
+          exit 1
       - name: Build
         run: python packaging/build.py
       - name: 安装包冒烟测试（启动、接口、文档与源码、离线演示、MCP、退出后进程结束与端口释放）
