@@ -95,11 +95,41 @@ def build_runtime(payload: Path) -> Path:
     py = rt / "python.exe" if WIN else rt / "bin" / "python3"
     run([uv(), "pip", "install", "--python", py, "--no-cache", "--link-mode", "copy",
          "-r", ROOT / "requirements-runtime.txt"])
+    prune_site_packages(stdlib / "site-packages")
     # 冒烟：关键依赖都能导入，FFmpeg 可执行
     run([py, "-c", "import streamlit, moviepy, edge_tts, openai, litellm, imageio_ffmpeg, PIL, toml, loguru;"
                    "import subprocess; exe = imageio_ffmpeg.get_ffmpeg_exe(); print('ffmpeg:', exe);"
                    "subprocess.run([exe, '-version'], check=True, capture_output=True)"])
     return py
+
+
+# 运行时用不到、而且路径很长的第三方文件：Windows 路径上限 260 字符，NSIS 打包和运行都会出错
+PRUNE_DIRS = {"guardrail_benchmarks"}
+PRUNE_PATHS = ("streamlit/.agents", "litellm/proxy/_experimental/out")   # Streamlit 给 AI 助手的示例、LiteLLM 代理服务器的网页界面
+PRUNE_TESTS_IN = {"pandas", "numpy", "pyarrow", "litellm"}
+MAX_REL_PATH = 170   # payload 内相对路径上限：留出 C:\\Users\\<用户名>\\AppData\\Local\\Programs\\ShortVideoFactory\\payload\\ 的长度
+
+
+def prune_site_packages(site: Path) -> None:
+    removed = 0
+    for d in sorted(site.rglob("*"), key=lambda p: -len(p.parts)):
+        if not d.is_dir() or d.is_symlink() or not d.exists():
+            continue
+        top = d.relative_to(site).parts[0]
+        if d.name in PRUNE_DIRS or (d.name == "tests" and top in PRUNE_TESTS_IN):
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+    for rel in PRUNE_PATHS:
+        if (site / rel).exists():
+            shutil.rmtree(site / rel, ignore_errors=True)
+            removed += 1
+    print(f"删掉运行时用不到的目录 {removed} 个")
+
+
+def check_path_lengths(payload: Path) -> None:
+    too_long = [str(p.relative_to(payload)) for p in payload.rglob("*") if len(str(p.relative_to(payload))) > MAX_REL_PATH]
+    if too_long:
+        raise SystemExit(f"有 {len(too_long)} 个路径太长（Windows 260 字符限制），例如：{too_long[:5]}")
 
 
 # ---------------- 2. 上游源码、字体、子进程入口、使用指南资料 ----------------
@@ -140,6 +170,7 @@ def build_payload() -> tuple[Path, Path]:
     # 预编译 .pyc（unchecked-hash：不依赖文件时间，安装目录只读也不用再写缓存）
     subprocess.run([str(py), "-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash",
                     str(payload / "runtime"), str(payload / "upstream"), str(payload / "child")], check=False)
+    check_path_lengths(payload)
     bad = [str(p.relative_to(payload)) for p in payload.rglob("*") if FORBIDDEN.search(str(p.relative_to(payload)))]
     if bad:
         raise SystemExit(f"安装包里不能有这些文件（版权）：{bad}")
@@ -222,7 +253,7 @@ def finish_windows(folder: Path, payload: Path, icon_dir: Path) -> Path:
     shutil.copy(ROOT / "docs" / "01 使用指南.md", folder / "使用指南.md")
     portable = DIST / f"{APP_ID}-{__version__}-windows-x64"
     shutil.make_archive(str(portable), "zip", DIST, APP_ID)
-    print("免安装版：", portable.with_suffix(".zip"))
+    print("免安装版：", f"{portable}.zip")
     makensis = find_makensis()
     if not makensis:
         print("没有找到 NSIS（makensis），跳过安装程序。安装：choco install nsis")

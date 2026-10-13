@@ -115,13 +115,19 @@ def wait_studio(page, timeout=180):
 
 
 def dismiss_tour(frame):
-    try:
-        close = frame.locator("button:has-text('×')")
-        if close.count():
-            close.first.click(timeout=3000)
-            frame.wait_for_timeout(500)
-    except Exception:  # noqa: BLE001
-        pass
+    """关掉上游的新手引导（driver.js 遮罩会挡住点击）。"""
+    for _ in range(6):
+        try:
+            frame.wait_for_timeout(800)
+            if frame.locator(".driver-overlay, .driver-popover").count() == 0:
+                return
+            btn = frame.locator(".driver-popover-close-btn")
+            if btn.count():
+                btn.first.click(timeout=3000, force=True)
+            else:
+                frame.page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            frame.page.keyboard.press("Escape")
 
 
 def zoom_state(page, frame):
@@ -195,6 +201,7 @@ def run_zoom(page, shots: Path):
     for p in STEPS:
         page.select_option("#zoom-select", str(p))
         check_zoom_state(page, frame, p, f"下拉选 {p}%")
+    dismiss_tour(frame)
     for p in (70, 120):
         page.select_option("#zoom-select", str(p))
         page.wait_for_timeout(400)
