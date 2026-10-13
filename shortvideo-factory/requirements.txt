@@ -1,0 +1,4 @@
+# 外壳（启动器）自己的依赖。打包时由 PyInstaller 打进 ShortVideoFactory 可执行文件。
+pywebview>=5.0,<7    # 独立窗口；装不上时自动改用浏览器打开
+psutil>=5.9          # 运行状态页：各进程 PID 与内存；退出时确认子进程都已结束
+tornado>=6.4         # 本机服务 + 到 Streamlit 的反向代理（含 WebSocket）

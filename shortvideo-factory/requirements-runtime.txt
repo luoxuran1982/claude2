@@ -1,0 +1,25 @@
+# 生成界面后台（上游 MoneyPrinterTurbo WebUI）的依赖，装进随包的独立 Python 运行时。
+# 版本与上游 upstream/requirements.txt（commit bbe7eb9）一致，只去掉了：
+#   faster-whisper、av —— 可选的 Whisper 字幕模式才用到，体积很大（还要另下 3 GB 模型），默认不打包；
+#                         字幕默认用 Edge TTS 自带的时间戳，免费、不需要它们。见 docs/01 使用指南「可选组件」。
+moviepy==2.2.1
+streamlit==1.59.1
+streamlit-tour==1.1.0
+edge_tts==7.2.7
+fastapi==0.136.3
+uvicorn==0.32.1
+openai==2.24.0
+loguru==0.7.3
+google-genai==2.11.0
+dashscope==1.20.14
+azure-cognitiveservices-speech==1.41.1
+redis==5.2.0
+python-multipart==0.0.27
+pyyaml==6.0.3
+requests==2.33.1
+packaging==24.2
+socksio==1.0.0
+pydub==0.25.1
+audioop-lts==0.2.2; python_version >= "3.13"
+litellm==1.86.2
+toml>=0.10.2

@@ -91,7 +91,8 @@ def root_dir():
 
 
 def storage_dir(sub_dir: str = "", create: bool = False):
-    d = os.path.join(root_dir(), "storage")
+    # [AI 短视频工厂补丁 P2] 桌面版把任务、缓存放在用户数据目录，由启动器通过环境变量指定。
+    d = os.environ.get("MPT_STORAGE_DIR") or os.path.join(root_dir(), "storage")
     if sub_dir:
         d = os.path.join(d, sub_dir)
     if create:
@@ -116,7 +117,8 @@ def task_dir(sub_dir: str = ""):
 
 
 def font_dir(sub_dir: str = ""):
-    d = resource_dir("fonts")
+    # [补丁 P2] 字体目录可由启动器指定（用户数据目录下的 fonts/，用户可自行放字体）
+    d = os.environ.get("MPT_FONT_DIR") or resource_dir("fonts")
     if sub_dir:
         d = os.path.join(d, sub_dir)
     os.makedirs(d, exist_ok=True)
@@ -124,7 +126,8 @@ def font_dir(sub_dir: str = ""):
 
 
 def song_dir(sub_dir: str = ""):
-    d = resource_dir("songs")
+    # [补丁 P2] 背景音乐目录可由启动器指定（用户数据目录下的 songs/）
+    d = os.environ.get("MPT_SONG_DIR") or resource_dir("songs")
     if sub_dir:
         d = os.path.join(d, sub_dir)
     os.makedirs(d, exist_ok=True)

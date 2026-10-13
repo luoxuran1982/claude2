@@ -91,8 +91,9 @@ style_file = Path(__file__).with_name("styles.css")
 streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
 st.markdown(streamlit_style, unsafe_allow_html=True)
 # 定义资源目录
-font_dir = os.path.join(root_dir, "resource", "fonts")
-song_dir = os.path.join(root_dir, "resource", "songs")
+# [AI 短视频工厂补丁 P3] 与 app/utils/utils.py 共用字体、背景音乐目录（桌面版指向用户数据目录）
+font_dir = utils.font_dir()
+song_dir = utils.song_dir()
 i18n_dir = os.path.join(root_dir, "webui", "i18n")
 config_file = os.path.join(root_dir, "webui", ".streamlit", "webui.toml")
 # 语言列表必须在会话状态初始化前可用，首次访问时才能把浏览器 locale 映射到
@@ -191,7 +192,8 @@ LOOMLOOM_VIDEO_MODEL_PRICES = (
 )
 DEFAULT_SUBTITLE_SETTINGS = {
     "subtitle_enabled": True,
-    "font_name": "MicrosoftYaHeiBold.ttc",
+    # [补丁 P3] 微软雅黑是商业字体，桌面版不随包分发；默认改用 OFL 开源的思源黑体（Noto Sans SC）
+    "font_name": os.environ.get("MPT_DEFAULT_FONT") or "MicrosoftYaHeiBold.ttc",
     "subtitle_position": "bottom",
     "subtitle_display_mode": "sentence",
     "subtitle_animation": "none",
@@ -1901,7 +1903,7 @@ def open_task_folder(task_id):
         # 通过路径拼接访问任务目录之外的位置，也避免后续打开目录时触发
         # 平台 shell 对特殊字符的解释。
         normalized_task_id = str(UUID(str(task_id)))
-        tasks_root = os.path.abspath(os.path.join(root_dir, "storage", "tasks"))
+        tasks_root = os.path.abspath(utils.task_dir())  # [补丁 P3] 任务目录跟随 MPT_STORAGE_DIR
         path = os.path.abspath(os.path.join(tasks_root, normalized_task_id))
 
         # 即使 UUID 校验通过，也再次确认最终路径仍在任务根目录内，避免

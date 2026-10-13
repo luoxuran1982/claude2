@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 短视频工厂</title>
+<link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/style.css">
+<script>window.SVF_BOOT = /*__SVF_BOOT__*/null;</script>
+<script src="/ui/zoom.js" defer></script>
+<script src="/ui/md.js" defer></script>
+<script src="/ui/guide.js" defer></script>
+<script src="/ui/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <img src="/ui/icon.svg" alt="" width="28" height="28">
+    <div><b>AI 短视频工厂</b><small><span id="app-version">v—</span> · 基于 <span id="upstream-version">MoneyPrinterTurbo</span></small></div>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="栏目">
+    <button role="tab" data-tab="studio" id="tab-studio">视频生成</button>
+    <button role="tab" data-tab="guide" id="tab-guide">使用指南</button>
+    <button role="tab" data-tab="status" id="tab-status">运行状态</button>
+  </nav>
+  <div class="top-actions">
+    <div class="zoom" role="group" aria-label="界面缩放">
+      <button id="zoom-out" type="button" title="缩小一档（−5%）" aria-label="缩小">−</button>
+      <select id="zoom-select" title="选择缩放比例" aria-label="缩放比例"></select>
+      <button id="zoom-in" type="button" title="放大一档（＋5%）" aria-label="放大">＋</button>
+      <button id="zoom-reset" type="button" title="恢复 100%" aria-label="恢复 100%">100%</button>
+    </div>
+    <button id="quit-btn" class="btn quit" type="button" title="停止全部后台并退出应用">退出</button>
+  </div>
+</header>
+
+<main>
+  <!-- 视频生成：上游 MoneyPrinterTurbo 的 Streamlit 界面（经本机服务反向代理，同源） -->
+  <section class="view" data-view="studio">
+    <div id="studio-overlay" class="overlay">
+      <div class="overlay-card">
+        <div class="spinner" id="studio-spinner"></div>
+        <h2 id="studio-title">正在启动生成界面…</h2>
+        <p id="studio-msg" class="muted">第一次打开要加载视频处理组件，一般 10–40 秒。</p>
+        <pre id="studio-log" class="log" hidden></pre>
+        <div class="overlay-actions" id="studio-actions" hidden>
+          <button class="btn primary" id="studio-restart" type="button">重新启动生成界面</button>
+          <button class="btn" data-open="logs" type="button">打开日志文件夹</button>
+          <button class="btn" data-goto="guide" data-page="doc:docs/01 使用指南.md" type="button">看「出了问题怎么办」</button>
+        </div>
+      </div>
+    </div>
+    <iframe id="studio-frame" title="视频生成界面（MoneyPrinterTurbo）" hidden></iframe>
+  </section>
+
+  <!-- 使用指南：README、UPSTREAM、docs/ 全部文档，附件，源码只读查看与下载 -->
+  <section class="view" data-view="guide">
+    <div class="guide">
+      <aside id="guide-nav" class="guide-nav" aria-label="使用指南目录"></aside>
+      <article id="guide-body" class="guide-body"><p class="muted">正在读取…</p></article>
+    </div>
+  </section>
+
+  <!-- 运行状态：逐进程 PID / 内存 -->
+  <section class="view" data-view="status">
+    <div class="status-wrap">
+      <div class="card">
+        <div class="card-head"><h2>当前进程与内存</h2>
+          <div class="head-tools"><label class="muted"><input type="checkbox" id="proc-auto" checked> 每 3 秒刷新</label>
+            <button class="btn small" id="proc-refresh" type="button">↻ 立即刷新</button></div></div>
+        <div id="proc-body"><p class="muted">正在读取…</p></div>
+      </div>
+      <div class="grid2">
+        <div class="card">
+          <h2>生成界面后台</h2>
+          <div id="webui-status" class="kv"></div>
+          <div class="btn-row"><button class="btn" id="webui-restart" type="button">重新启动生成界面</button></div>
+        </div>
+        <div class="card">
+          <h2>数据放在哪里</h2>
+          <div id="paths" class="kv"></div>
+          <div class="btn-row">
+            <button class="btn" data-open="output" type="button">打开生成的视频</button>
+            <button class="btn" data-open="data" type="button">打开数据文件夹</button>
+            <button class="btn" data-open="fonts" type="button">字体文件夹</button>
+            <button class="btn" data-open="songs" type="button">背景音乐文件夹</button>
+            <button class="btn" data-open="logs" type="button">日志</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
