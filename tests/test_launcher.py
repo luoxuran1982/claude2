@@ -69,7 +69,8 @@ class LauncherTests(unittest.TestCase):
         (tmp / "fake" / "webview.py").write_text(fake_src, encoding="utf-8")
         port = free_port()
         env = dict(os.environ, PYTHONPATH=str(tmp / "fake"), STUDIO_DATA_DIR=str(tmp / "data"),
-                   STUDIO_URL_FILE=str(tmp / "url.txt"), BROWSER="true" if os.name != "nt" else "")
+                   STUDIO_URL_FILE=str(tmp / "url.txt"),
+                   BROWSER=sys.executable)  # 回退到浏览器时不真的打开浏览器（python 打不开网址，直接退出）
         self.out = open(tmp / "out.txt", "wb")
         proc = subprocess.Popen([sys.executable, "-X", "faulthandler", str(ROOT / "run.py"), "--port", str(port)], env=env,
                                 stdout=self.out, stderr=subprocess.STDOUT)
