@@ -684,7 +684,7 @@ const ZOOM_STEPS = [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120];
 function readZoom() {
   try { const z = parseInt(localStorage.getItem("ui-zoom"), 10); return ZOOM_STEPS.includes(z) ? z : 100; } catch (e) { return 100; }
 }
-function applyZoom(z) {
+function applyZoom(z, persist = true) {
   if (!ZOOM_STEPS.includes(z)) z = 100;
   document.body.style.zoom = z / 100;
   document.body.dataset.zoom = z;
@@ -693,6 +693,8 @@ function applyZoom(z) {
   $("#zoomIn").disabled = z >= ZOOM_STEPS[ZOOM_STEPS.length - 1];
   $("#zoomReset").disabled = z === 100;
   try { localStorage.setItem("ui-zoom", String(z)); } catch (e) { /* 无痕模式等：只在本次生效 */ }
+  // 每次启动端口不同，浏览器本地存储跟着变，所以同时存到数据目录，下次打开以它为准
+  if (persist && TOKEN) api("POST", "/api/ui", { zoom: z }).catch(() => {});
 }
 function stepZoom(d) {
   const i = ZOOM_STEPS.indexOf(readZoomNow());
@@ -704,7 +706,7 @@ $("#zoomSel").onchange = (e) => applyZoom(parseInt(e.target.value, 10));
 $("#zoomOut").onclick = () => stepZoom(-1);
 $("#zoomIn").onclick = () => stepZoom(1);
 $("#zoomReset").onclick = () => applyZoom(100);
-applyZoom(readZoom());
+applyZoom(readZoom(), false);
 
 // ---------------------------------------------------------------- 运行状态
 let statusTimer = null;
@@ -851,6 +853,7 @@ window.addEventListener("beforeunload", (e) => { if (saveTimer) { saveNow(); } }
   }
   state.boot = await guard(() => api("GET", "/api/bootstrap"));
   $("#appVersion").textContent = "v" + state.boot.version;
+  if (state.boot.ui?.zoom) applyZoom(state.boot.ui.zoom, false);
   document.title = `AI 知识视频工坊 v${state.boot.version}`;
   $("#dataDir").textContent = state.boot.data_dir;
   const last = localStorage.getItem("lastProject");

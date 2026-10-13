@@ -69,7 +69,19 @@ class App:
                 "data_dir": str(paths.data_dir()),
                 "music": sorted(p.name for p in paths.music_dir().iterdir() if p.suffix.lower() in (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")),
                 "job": self.jobs.status(),
+                "ui": _load_ui(),
             }
+
+        @r("POST", "/api/ui")
+        def save_ui(req):
+            """界面偏好（目前只有缩放）。存在数据目录里：每次启动端口不同，浏览器本地存储会跟着变，所以以这里为准。"""
+            body = req.json()
+            ui = _load_ui()
+            z = body.get("zoom")
+            if isinstance(z, int) and z in ZOOM_STEPS:
+                ui["zoom"] = z
+            (paths.data_dir() / "ui.json").write_text(json.dumps(ui), encoding="utf-8")
+            return {"ui": ui}
 
         @r("POST", "/api/settings")
         def save_settings(req):
@@ -388,6 +400,21 @@ class App:
             return self.jobs.start(kind, pid, fn, *args, label=label, **kwargs)
         except JobBusy as e:
             raise ApiError(409, str(e))
+
+
+ZOOM_STEPS = list(range(70, 121, 5))
+
+
+def _load_ui():
+    try:
+        ui = json.loads((paths.data_dir() / "ui.json").read_text(encoding="utf-8"))
+        if not isinstance(ui, dict):
+            ui = {}
+    except (OSError, ValueError):
+        ui = {}
+    if ui.get("zoom") not in ZOOM_STEPS:
+        ui["zoom"] = 100
+    return ui
 
 
 class RawResponse:
