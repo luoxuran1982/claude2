@@ -1,4 +1,4 @@
-name: quant-lab
+name: QuantLab 量化学习实验室
 
 on:
   push:
