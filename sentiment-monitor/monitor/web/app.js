@@ -112,6 +112,16 @@ function niceMax(v) {
   return raw * 4;
 }
 const dayLabel = (d) => d.slice(5);
+/** 横轴要显示标签的下标：每 step 个一个，并保证最后一天显示；最后一天离前一个标签不足 step 时去掉前一个，避免重叠 */
+function axisTicks(n, step) {
+  const t = [];
+  for (let i = 0; i < n; i += step) t.push(i);
+  if (t[t.length - 1] !== n - 1) {
+    if (t.length > 1 && n - 1 - t[t.length - 1] < step) t.pop();
+    t.push(n - 1);
+  }
+  return new Set(t);
+}
 
 /** 堆叠柱状图：rows=[{day,pos,neu,neg}]，series=[{key,label,color}] */
 function stackedBars(el, rows, series) {
@@ -127,7 +137,7 @@ function stackedBars(el, rows, series) {
     g += `<line class="grid-line" x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}"/><text x="${m.l - 6}" y="${yy + 4}" text-anchor="end">${Math.round(v)}</text>`;
   }
   let bars = "", hits = "", xl = "";
-  const step = Math.ceil(rows.length / Math.max(2, Math.floor(iw / 48)));
+  const ticks = axisTicks(rows.length, Math.ceil(rows.length / Math.max(2, Math.floor(iw / 48))));
   rows.forEach((r, i) => {
     const x = m.l + band * i + (band - bw) / 2;
     let acc = 0;
@@ -142,7 +152,7 @@ function stackedBars(el, rows, series) {
       acc += v;
     });
     hits += `<rect class="hover-col" data-i="${i}" x="${m.l + band * i}" y="${m.t}" width="${band}" height="${ih}"/>`;
-    if (i % step === 0 || i === rows.length - 1) xl += `<text x="${m.l + band * i + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(r.day)}</text>`;
+    if (ticks.has(i)) xl += `<text x="${m.l + band * i + band / 2}" y="${H - 6}" text-anchor="middle">${dayLabel(r.day)}</text>`;
   });
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="每日资讯量"><g class="axis">${g}${xl}</g><line class="zero-line" x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}"/>${bars}${hits}</svg>`;
   $$(".hover-col", el).forEach((rc) => {
@@ -181,8 +191,8 @@ function lineChart(el, rows, color) {
     if ((!prev || prev.avg == null) && (!next || next.avg == null)) dots += `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${color}"/>`;
   });
   let xl = "";
-  const step = Math.ceil(n / Math.max(2, Math.floor(iw / 48)));
-  rows.forEach((r, i) => { if (i % step === 0 || i === n - 1) xl += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabel(r.day)}</text>`; });
+  const ticks = axisTicks(n, Math.ceil(n / Math.max(2, Math.floor(iw / 48))));
+  rows.forEach((r, i) => { if (ticks.has(i)) xl += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${dayLabel(r.day)}</text>`; });
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="情绪指数"><g class="axis">${g}${xl}</g>
     <path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}
     <line class="cross" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/>
