@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import numpy as np
 import pandas as pd
 
-from . import APP_NAME, __version__, config, dataset, experiment
+from . import APP_NAME, __version__, config, dataset, experiment, guide, sysinfo
 from . import features as F
 from .data import demo
 from .data.store import DataStore
@@ -32,6 +32,7 @@ STATIC = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/vendor/echarts.min.js": ("vendor/echarts.min.js", "text/javascript; charset=utf-8"),
+    "/markdown.js": ("markdown.js", "text/javascript; charset=utf-8"),
 }
 CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
        "script-src 'self' 'unsafe-eval'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
@@ -68,10 +69,20 @@ class App:
         self.last_seen = time.time()
         self.quit_event = threading.Event()
         self._static = resource_dir() / "web"
+        self.sources = guide.Sources()
+        self.mode = "服务模式"        # 启动后由 app.py 改成「窗口模式」或「浏览器模式」
+
+    def process_status(self) -> dict:
+        role = {"窗口模式": "主进程（窗口 + 本机服务 + 计算任务）",
+                "浏览器模式": "主进程（本机服务 + 计算任务；页面在你的浏览器里）"}.get(self.mode, "主进程（本机服务 + 计算任务）")
+        info = sysinfo.processes(role, self.mode)
+        job = self.jobs.snapshot()
+        info["job"] = {"title": job["title"], "status": job["status"]} if job else None
+        return info
 
     # ------------------------------------------------------------ 读
     def status(self) -> dict:
-        return {"app": APP_NAME, "version": __version__, "data_dir": str(self.root),
+        return {"app": APP_NAME, "version": __version__, "data_dir": str(self.root), "mode": self.mode,
                 "datasets": self.store.list(), "n_runs": len(self.runs.list()),
                 "job": self.jobs.snapshot(), "desktop": self.desktop is not None}
 
@@ -254,6 +265,23 @@ def make_handler(app: App, port: int):
                     return self.json(app.status())
                 if path == "/api/catalog":
                     return self.json(app.catalog())
+                if path == "/api/processes":
+                    return self.json(app.process_status())
+                if path == "/api/docs":
+                    return self.json({"docs": guide.list_docs(), "assets": guide.list_assets()})
+                if path == "/api/doc":
+                    return self.json(guide.read_doc(q.get("path", "")))
+                if path == "/api/doc-asset":
+                    payload, ctype = guide.doc_asset(q.get("path", ""))
+                    return self.send(200, payload, ctype)
+                if path == "/api/sources":
+                    return self.json({"files": app.sources.list()})
+                if path == "/api/source":
+                    return self.json(app.sources.read(q.get("path", "")))
+                if path == "/api/source.zip":
+                    name = f"QuantLab-{__version__}-source.zip"
+                    return self.send(200, app.sources.zip_bytes(), "application/zip",
+                                     {"Content-Disposition": f"attachment; filename=\"{name}\""})
                 if path == "/api/job":
                     return self.json({"job": app.jobs.snapshot()})
                 if path == "/api/dataset":
@@ -329,6 +357,14 @@ def make_handler(app: App, port: int):
                     if not app.desktop:
                         return self.json({"mode": "browser"})
                     return self.json({"path": app.desktop.folder_dialog()})
+                if path == "/api/save-source":
+                    if not app.desktop:
+                        return self.json({"mode": "browser"})
+                    target = app.desktop.save_dialog(f"QuantLab-{__version__}-source.zip")
+                    if not target:
+                        return self.json({"cancelled": True})
+                    Path(target).write_bytes(app.sources.zip_bytes())
+                    return self.json({"saved": str(target)})
                 if path == "/api/save":
                     name, payload = app.export_bytes(str(body.get("id", "")), str(body.get("kind", "")))
                     if not app.desktop:

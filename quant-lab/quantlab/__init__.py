@@ -2,4 +2,4 @@
 
 APP_NAME = "QuantLab 量化学习实验室"
 APP_ID = "QuantLab"
-__version__ = "1.0.0"
+__version__ = "1.1.0"

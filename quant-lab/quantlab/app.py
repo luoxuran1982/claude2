@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import logging
+import os
 import sys
 import threading
 import time
 import webbrowser
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from . import APP_NAME, __version__
 from .paths import data_dir
 from .server import serve
+from .sysinfo import stop_children
 
 log = logging.getLogger("quantlab")
 BROWSER_IDLE_EXIT = 600  # 浏览器模式：页面关闭 10 分钟且没有任务时退出后台
@@ -40,7 +44,7 @@ class Desktop:
         return result or None
 
     def save_dialog(self, filename: str):
-        types = ("CSV 表格 (*.csv)",) if filename.endswith(".csv") else ("JSON (*.json)",)
+        types = {".csv": ("CSV 表格 (*.csv)",), ".zip": ("ZIP 压缩包 (*.zip)",)}.get(filename[-4:], ("JSON (*.json)",))
         result = self.window.create_file_dialog(self._kind("SAVE", "SAVE_DIALOG"), save_filename=filename, file_types=types)
         if isinstance(result, (list, tuple)):
             result = result[0] if result else None
@@ -57,6 +61,11 @@ def run_window(app, url: str, storage: str) -> bool:
         window = webview.create_window(APP_NAME, url, width=1480, height=940, min_size=(1000, 680),
                                        background_color="#F4F6FA", text_select=True)
         app.desktop = Desktop(webview, window)
+        app.mode = "窗口模式"
+        try:  # 关闭最后一个（也是唯一的）窗口：立即开始收尾，不等 webview.start() 返回
+            window.events.closed += lambda: app.quit_event.set()
+        except Exception:  # noqa: BLE001
+            pass
         kwargs = {"private_mode": False, "storage_path": storage}
         if sys.platform == "win32":
             kwargs["gui"] = "edgechromium"
@@ -65,10 +74,12 @@ def run_window(app, url: str, storage: str) -> bool:
     except Exception:  # noqa: BLE001
         log.exception("原生窗口启动失败，改用浏览器")
         app.desktop = None
+        app.mode = "服务模式"
         return False
 
 
 def run_browser(app, url: str) -> None:
+    app.mode = "浏览器模式"
     threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     print(f"{APP_NAME} 已在浏览器打开：{url}\n关闭页面 10 分钟后自动退出，或按 Ctrl+C。", flush=True)
     app.last_seen = time.time()
@@ -78,12 +89,36 @@ def run_browser(app, url: str) -> None:
             break
 
 
+def shutdown(app, httpd, wait: float = 5.0) -> None:
+    """退出收尾（可重复调用）：取消计算任务 → 停止子进程 → 关闭本机服务释放端口。不删除任何数据或设置。"""
+    if getattr(app, "_shut", False):
+        return
+    app._shut = True
+    app.quit_event.set()
+    if app.jobs.cancel():
+        log.info("退出：取消正在运行的任务")
+        deadline = time.time() + wait
+        while app.jobs.busy() and time.time() < deadline:
+            time.sleep(0.1)
+    n = stop_children()
+    if n:
+        log.info("退出：结束了 %d 个子进程", n)
+    try:
+        httpd.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        httpd.server_close()
+    except Exception:  # noqa: BLE001
+        pass
+    log.info("已退出（端口已释放）%s", "；仍有任务线程未结束，强制结束进程" if app.jobs.busy() else "")
+
+
 def selftest(out: str) -> None:
     """打包后验证 LightGBM / sklearn / pyarrow 等依赖都能用：演示数据 → 三模型集成实验。"""
     import json
     import tempfile
     import traceback
-    from pathlib import Path
 
     from . import experiment
     from .data import demo
@@ -114,6 +149,7 @@ def main(argv=None) -> None:
     ap.add_argument("--browser", action="store_true", help="用默认浏览器打开，不用独立窗口")
     ap.add_argument("--port", type=int, default=0, help="端口（默认随机）")
     ap.add_argument("--serve-only", action="store_true", help="只启动服务（开发/测试用）")
+    ap.add_argument("--url-file", metavar="PATH", help="把带令牌的访问地址写到文件（测试用）")
     ap.add_argument("--selftest", metavar="OUT.json", help="自检：生成小份演示数据跑一遍完整实验，结果写到文件后退出")
     args = ap.parse_args(argv)
     if args.selftest:
@@ -129,7 +165,10 @@ def main(argv=None) -> None:
     port = httpd.server_address[1]
     url = f"http://127.0.0.1:{port}/?t={app.token}"
     threading.Thread(target=httpd.serve_forever, name="http", daemon=True).start()
-    log.info("%s %s 启动，数据目录 %s", APP_NAME, __version__, directory)
+    atexit.register(shutdown, app, httpd, 1.0)
+    log.info("%s %s 启动，数据目录 %s，PID %d", APP_NAME, __version__, directory, os.getpid())
+    if args.url_file:
+        Path(args.url_file).write_text(url, encoding="utf-8")
     try:
         if args.serve_only:
             print(url, flush=True)
@@ -139,6 +178,9 @@ def main(argv=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        httpd.shutdown()
-        httpd.server_close()
-        log.info("已退出")
+        busy = app.jobs.busy()
+        shutdown(app, httpd)
+        if busy or app.jobs.busy():
+            # 计算线程可能卡在 LightGBM 等原生代码里，不能让它拖住退出：确认收尾后直接结束进程
+            logging.shutdown()
+            os._exit(0)
