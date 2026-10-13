@@ -59,7 +59,8 @@ function navigate(page) {
   $$(".page").forEach((s) => s.classList.toggle("active", s.id === "page-" + page));
   location.hash = page;
   ({ projects: loadProjects, brief: renderBrief, editor: renderEditor, review: renderReview, export: renderExport,
-     library: renderLibrary, settings: renderSettings })[page]?.();
+     library: renderLibrary, settings: renderSettings, help: renderGuide, status: renderStatus })[page]?.();
+  if (page !== "status") clearTimeout(statusTimer);
 }
 
 function updateNav() {
@@ -678,13 +679,164 @@ $("#s-ttstest").onclick = async () => {
   toast(`引擎 ${r.engine}，${r.seconds} 秒`);
 };
 
+// ---------------------------------------------------------------- 界面缩放（70%–120%，每 5% 一档）
+const ZOOM_STEPS = [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120];
+function readZoom() {
+  try { const z = parseInt(localStorage.getItem("ui-zoom"), 10); return ZOOM_STEPS.includes(z) ? z : 100; } catch (e) { return 100; }
+}
+function applyZoom(z) {
+  if (!ZOOM_STEPS.includes(z)) z = 100;
+  document.body.style.zoom = z / 100;
+  document.body.dataset.zoom = z;
+  $("#zoomSel").value = String(z);
+  $("#zoomOut").disabled = z <= ZOOM_STEPS[0];
+  $("#zoomIn").disabled = z >= ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  $("#zoomReset").disabled = z === 100;
+  try { localStorage.setItem("ui-zoom", String(z)); } catch (e) { /* 无痕模式等：只在本次生效 */ }
+}
+function stepZoom(d) {
+  const i = ZOOM_STEPS.indexOf(readZoomNow());
+  applyZoom(ZOOM_STEPS[Math.max(0, Math.min(ZOOM_STEPS.length - 1, i + d))]);
+}
+function readZoomNow() { return parseInt(document.body.dataset.zoom, 10) || 100; }
+$("#zoomSel").innerHTML = ZOOM_STEPS.map((z) => `<option value="${z}">${z}%</option>`).join("");
+$("#zoomSel").onchange = (e) => applyZoom(parseInt(e.target.value, 10));
+$("#zoomOut").onclick = () => stepZoom(-1);
+$("#zoomIn").onclick = () => stepZoom(1);
+$("#zoomReset").onclick = () => applyZoom(100);
+applyZoom(readZoom());
+
+// ---------------------------------------------------------------- 运行状态
+let statusTimer = null;
+async function renderStatus() {
+  clearTimeout(statusTimer);
+  let d;
+  try { d = await api("GET", "/api/status/processes"); } catch (e) { d = null; }
+  const tbl = $("#st-table");
+  if (!d) {
+    $("#st-summary").textContent = "暂不可用：读取进程信息失败。";
+    tbl.innerHTML = "";
+  } else {
+    const fmt = (v) => (v === null || v === undefined ? "暂不可用" : v.toFixed(1));
+    $("#st-summary").innerHTML = `采样时间 ${esc(d.sampled_at)} · 口径：${esc(d.metric)} · 单位：${esc(d.unit)} · 读取方式：${esc(d.source)}<br>` +
+      `<b>${esc(d.backend)}</b>${d.external ? " · 外部依赖：" + esc(d.external) : ""}`;
+    tbl.innerHTML = `<tr><th>职责</th><th>进程名</th><th>PID</th><th>内存（MiB）</th><th>采样时间</th></tr>` +
+      d.processes.map((p) => `<tr data-pid="${p.pid}"><td>${esc(p.role)}</td><td>${esc(p.name || "")}</td><td class="pid">${p.pid}</td><td>${fmt(p.mib)}</td><td>${esc(p.sampled)}</td></tr>`).join("") +
+      `<tr><td colspan="3"><b>本应用合计（${d.processes.length} 个进程）</b></td><td><b>${fmt(d.total_mib)}</b></td><td></td></tr>`;
+    $("#st-note").textContent = d.note + " 同一进程里的线程共享 PID，不单独列出。Windows 任务管理器默认显示「专用工作集」，比这里的工作集小。";
+  }
+  if (state.page === "status" && $("#st-auto").checked) statusTimer = setTimeout(renderStatus, 3000);
+}
+$("#st-refresh").onclick = renderStatus;
+$("#st-auto").onchange = renderStatus;
+
+// ---------------------------------------------------------------- 使用指南（文档 + 源码，离线）
+const guide = { tab: localStorage.getItem("guide-tab") || "docs", docs: null, sources: null, doc: null, src: null };
+
+function dirOf(p) { return p.includes("/") ? p.slice(0, p.lastIndexOf("/") + 1) : ""; }
+function resolveRel(base, rel) {
+  const parts = (dirOf(base) + rel).split("/");
+  const out = [];
+  for (const x of parts) { if (x === "..") out.pop(); else if (x !== ".") out.push(x); }
+  return out.join("/");
+}
+
+async function loadGuideLists() {
+  if (!guide.docs) {
+    const d = await guard(() => api("GET", "/api/guide/docs"));
+    guide.docs = d.docs; guide.assets = d.assets;
+  }
+  if (!guide.sources) guide.sources = (await guard(() => api("GET", "/api/guide/sources"))).files;
+}
+
+async function renderGuide() {
+  await loadGuideLists();
+  $$("[data-gtab]").forEach((b) => b.classList.toggle("active", b.dataset.gtab === guide.tab));
+  $("#g-srcbar").classList.toggle("hidden", guide.tab !== "source");
+  $("#g-zip").href = media("/api/guide/source.zip");
+  const list = $("#g-list");
+  if (guide.tab === "docs") {
+    list.innerHTML = guide.docs.map((d) => `<li data-doc="${esc(d.path)}" class="${d.path === guide.doc ? "active" : ""}"><b>${esc(d.title)}</b><span class="hint">${esc(d.path)}</span></li>`).join("") +
+      (guide.assets?.length ? `<li class="sep hint">附件</li>` + guide.assets.map((a) => `<li class="asset"><a href="${esc(media("/api/guide/asset?path=" + encodeURIComponent(a)))}" target="_blank">${esc(a)}</a></li>`).join("") : "");
+    showDoc(guide.doc && guide.docs.find((d) => d.path === guide.doc) ? guide.doc : guide.docs[0]?.path);
+  } else if (guide.tab === "source") {
+    list.innerHTML = guide.sources.map((f) => `<li data-src="${esc(f.path)}" class="${f.path === guide.src ? "active" : ""}"><code>${esc(f.path)}</code><span class="hint">${f.lines} 行</span></li>`).join("");
+    showSource(guide.src || guide.sources[0]?.path);
+  } else {
+    list.innerHTML = `<li class="active"><b>快速上手</b><span class="hint">原「说明」页内容</span></li>`;
+    $("#g-body").innerHTML = $("#g-quick").innerHTML;
+  }
+}
+
+async function showDoc(path, anchor) {
+  if (!path) { $("#g-body").innerHTML = `<p class="empty">没有找到文档。</p>`; return; }
+  guide.doc = path; localStorage.setItem("guide-doc", path);
+  $$("#g-list li[data-doc]").forEach((li) => li.classList.toggle("active", li.dataset.doc === path));
+  const { text } = await guard(() => api("GET", "/api/guide/doc?path=" + encodeURIComponent(path)));
+  const docSet = new Set(guide.docs.map((d) => d.path));
+  const srcSet = new Set(guide.sources.map((f) => f.path));
+  const { html, toc } = MD.render(text, {
+    image: (src) => /^(https?:|data:)/.test(src) ? src : media("/api/guide/asset?path=" + encodeURIComponent(resolveRel(path, decodeURI(src)))),
+    link: (href) => {
+      if (/^(https?:|mailto:)/.test(href)) return { href, attrs: ' target="_blank" rel="noopener"' };
+      if (href.startsWith("#")) return { href: "#", attrs: ` data-anchor="${esc(decodeURI(href.slice(1)))}"` };
+      const [file, hash] = href.split("#");
+      const target = resolveRel(path, decodeURI(file));
+      if (docSet.has(target)) return { href: "#", attrs: ` data-doc-link="${esc(target)}" data-anchor="${esc(hash || "")}"` };
+      if (srcSet.has(target)) return { href: "#", attrs: ` data-src-link="${esc(target)}"` };
+      const asset = (guide.assets || []).includes(target);
+      if (asset) return { href: media("/api/guide/asset?path=" + encodeURIComponent(target)), attrs: ' target="_blank"' };
+      return { href: "#", attrs: ` class="dead" title="应用内没有这个文件：${esc(target)}"` };
+    },
+  });
+  const tocHtml = toc.filter((t) => t.level >= 2 && t.level <= 3).map((t) => `<a data-anchor="${esc(t.id.slice(2))}" class="toc-l${t.level}">${esc(t.text)}</a>`).join("");
+  $("#g-body").innerHTML = `<div class="g-path hint">${esc(path)}</div>` + (tocHtml ? `<nav class="g-toc"><b>本篇目录</b>${tocHtml}</nav>` : "") + html;
+  $("#g-body").scrollTop = 0;
+  if (anchor) scrollToAnchor(anchor); else window.scrollTo(0, 0);
+}
+
+function scrollToAnchor(a) {
+  const id = "h-" + a.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").trim().replace(/\s+/g, "-");
+  const el = document.getElementById(id) || document.getElementById("h-" + a);
+  if (el) el.scrollIntoView({ block: "start" });
+}
+
+async function showSource(path) {
+  if (!path) return;
+  guide.src = path;
+  $$("#g-list li[data-src]").forEach((li) => li.classList.toggle("active", li.dataset.src === path));
+  const { text } = await guard(() => api("GET", "/api/guide/source?path=" + encodeURIComponent(path)));
+  const lines = text.split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  $("#g-body").innerHTML = `<div class="row between"><div><code>${esc(path)}</code> <span class="hint">${lines.length} 行 · 只读</span></div></div>` +
+    `<pre class="src"><code>${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join("\n")}</code></pre>`;
+  window.scrollTo(0, 0);
+}
+
+$$("[data-gtab]").forEach((b) => (b.onclick = () => { guide.tab = b.dataset.gtab; localStorage.setItem("guide-tab", guide.tab); renderGuide(); }));
+$("#g-list").addEventListener("click", (e) => {
+  const li = e.target.closest("li");
+  if (!li) return;
+  if (li.dataset.doc) showDoc(li.dataset.doc);
+  if (li.dataset.src) showSource(li.dataset.src);
+});
+$("#g-body").addEventListener("click", (e) => {
+  const a = e.target.closest("a");
+  if (!a) return;
+  if (a.dataset.docLink) { e.preventDefault(); guide.tab = "docs"; showDoc(a.dataset.docLink, a.dataset.anchor); return; }
+  if (a.dataset.srcLink) { e.preventDefault(); guide.tab = "source"; renderGuide().then(() => showSource(a.dataset.srcLink)); return; }
+  if (a.dataset.anchor !== undefined) { e.preventDefault(); scrollToAnchor(a.dataset.anchor); return; }
+  if (a.classList.contains("dead")) e.preventDefault();
+});
+guide.doc = localStorage.getItem("guide-doc");
+
 // ---------------------------------------------------------------- 启动
 $$("#nav a").forEach((a) => (a.onclick = () => navigate(a.dataset.page)));
 $("#quit").onclick = async () => {
   if (state.job?.state === "running" && !confirm("有任务在运行，退出会中断它。确定退出？")) return;
   if (saveTimer) await saveNow();
   await api("POST", "/api/shutdown").catch(() => {});
-  document.body.innerHTML = `<div class="empty">已退出。可以关闭这个页面。</div>`;
+  document.body.innerHTML = `<div class="empty">已退出：后台服务和本应用启动的子进程都已结束。可以关闭这个页面。</div>`;
 };
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); saveNow().then(() => toast("已保存")); }
@@ -698,6 +850,8 @@ window.addEventListener("beforeunload", (e) => { if (saveTimer) { saveNow(); } }
     return;
   }
   state.boot = await guard(() => api("GET", "/api/bootstrap"));
+  $("#appVersion").textContent = "v" + state.boot.version;
+  document.title = `AI 知识视频工坊 v${state.boot.version}`;
   $("#dataDir").textContent = state.boot.data_dir;
   const last = localStorage.getItem("lastProject");
   if (last) await openProject(last).catch(() => localStorage.removeItem("lastProject"));

@@ -9,7 +9,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand">AI 知识视频工坊</div>
+  <div class="brand">AI 知识视频工坊 <span id="appVersion" class="version" title="当前版本"></span></div>
   <nav id="nav">
     <a data-page="projects">项目</a>
     <a data-page="brief">创作</a>
@@ -18,10 +18,17 @@
     <a data-page="export">导出</a>
     <a data-page="library">素材库</a>
     <a data-page="settings">设置</a>
-    <a data-page="help">说明</a>
+    <a data-page="status">运行状态</a>
+    <a data-page="help">使用指南</a>
   </nav>
   <div class="current" id="currentTitle"></div>
-  <button id="quit" class="ghost small" title="关闭后台服务">退出</button>
+  <div class="zoom" id="zoomCtl" role="group" aria-label="界面缩放">
+    <button id="zoomOut" class="small" title="缩小一档（-5%）" aria-label="缩小">−</button>
+    <select id="zoomSel" title="选择缩放百分比" aria-label="缩放百分比"></select>
+    <button id="zoomIn" class="small" title="放大一档（+5%）" aria-label="放大">＋</button>
+    <button id="zoomReset" class="small ghost" title="恢复到 100%">100%</button>
+  </div>
+  <button id="quit" class="ghost small" title="结束后台服务和本应用启动的子进程">退出</button>
 </header>
 
 <div id="jobbar" class="jobbar hidden">
@@ -75,7 +82,7 @@
         <button id="b-fromtext">按段落切分镜</button>
         <hr>
         <h3>方式三：导入分镜 JSON</h3>
-        <textarea id="b-json" rows="4" placeholder="在其他地方（例如网页版聊天）按「说明」页的格式生成的 JSON，粘贴到这里。"></textarea>
+        <textarea id="b-json" rows="4" placeholder="在其他地方（例如网页版聊天）按「使用指南 → 快速上手」的格式生成的 JSON，粘贴到这里。"></textarea>
         <button id="b-importjson">导入</button>
       </div>
     </div>
@@ -257,8 +264,35 @@
     <div class="row"><button id="s-save" class="primary">保存设置</button><span id="s-saved" class="hint"></span></div>
   </section>
 
-  <!-- 说明 -->
-  <section id="page-help" class="page help">
+  <!-- 运行状态 -->
+  <section id="page-status" class="page">
+    <div class="row between">
+      <h2>运行状态：本应用的进程与内存</h2>
+      <div class="row"><label class="check"><input type="checkbox" id="st-auto" checked> 每 3 秒刷新</label><button id="st-refresh" class="ghost">刷新</button></div>
+    </div>
+    <div class="card">
+      <div id="st-summary" class="hint"></div>
+      <table class="list" id="st-table"></table>
+      <p class="hint" id="st-note"></p>
+    </div>
+  </section>
+
+  <!-- 使用指南 -->
+  <section id="page-help" class="page guide">
+    <aside class="guide-nav">
+      <div class="guide-tabs">
+        <button class="small seg" data-gtab="docs">文档</button>
+        <button class="small seg" data-gtab="source">源码</button>
+        <button class="small seg" data-gtab="quick">快速上手</button>
+      </div>
+      <ol id="g-list" class="guide-list"></ol>
+      <div id="g-srcbar" class="hidden">
+        <a id="g-zip" class="button-like" download>下载全部源码（zip）</a>
+        <p class="hint">只含本应用手写的源码和文档，不含第三方库、虚拟环境、打包产物和用户数据。</p>
+      </div>
+    </aside>
+    <article id="g-body" class="guide-body md"></article>
+    <div id="g-quick" class="hidden">
     <h2>怎么用</h2>
     <ol>
       <li><b>创作</b>：填主题、受众、时长，<b>写 3–5 句你自己的观点</b>，粘贴参考资料。点“生成”——默认只调用一次模型，拿到标题、分镜、封面标题、简介、事实清单。超过 6 分钟的视频分“大纲 + 每章一次”。</li>
@@ -287,11 +321,13 @@
              "data": {...}, "image_query": "english description", "short": false}],
  "claims": [{"text": "...", "confidence": "high|medium|low"}]}</pre>
     <p class="hint">合规提示只是规则匹配，不是法律意见。投资内容上线前建议请律师过一遍边界。</p>
+      </div>
   </section>
 </main>
 
 <div id="modal" class="modal hidden"><div class="modal-body"><div class="row between"><h3 id="modalTitle"></h3><button id="modalClose" class="ghost small">关闭</button></div><div id="modalContent"></div></div></div>
 <div id="toast" class="toast hidden"></div>
+<script src="md.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

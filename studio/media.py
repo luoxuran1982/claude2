@@ -89,6 +89,16 @@ class Runner:
             raise ToolError(f"无法启动 {args[0]}：{e}") from e
         with self._lock:
             self._proc = proc
+        from . import procinfo
+
+        name = Path(str(args[0])).name.lower()
+        procinfo.register(proc, "FFmpeg 子进程（编码/转码）" if "ffmpeg" in name else f"配音/工具子进程（{Path(str(args[0])).name}）")
+        try:
+            return self._wait(proc, args, timeout, on_line, input_bytes)
+        finally:
+            procinfo.unregister(proc)
+
+    def _wait(self, proc, args, timeout, on_line, input_bytes):
         out_chunks, err_chunks = [], []
 
         def pump(stream, sink, cb):

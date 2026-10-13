@@ -12,7 +12,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, images, llm, paths, pipeline, tts, visuals
+from . import __version__, guide, images, llm, paths, pipeline, procinfo, tts, visuals
 from . import project as proj
 from . import settings as settings_mod
 from .jobs import JobBusy, JobManager
@@ -341,9 +341,44 @@ class App:
         def heartbeat(req):
             return {"ok": True, "job": self.jobs.status()}
 
+        # ---------------- 使用指南：文档与源码（只读、白名单）
+        @r("GET", "/api/guide/docs")
+        def guide_docs(req):
+            return {"docs": guide.list_docs(), "assets": guide.list_assets(), "version": __version__}
+
+        @r("GET", "/api/guide/doc")
+        def guide_doc(req):
+            rel = req.query.get("path", "")
+            return {"path": rel, "text": guide.read_doc(rel)}
+
+        @r("GET", "/api/guide/asset")
+        def guide_asset(req):
+            data, ctype = guide.read_asset(req.query.get("path", ""))
+            return RawResponse(data, ctype)
+
+        @r("GET", "/api/guide/sources")
+        def guide_sources(req):
+            return {"files": guide.list_sources(), "version": __version__}
+
+        @r("GET", "/api/guide/source")
+        def guide_source(req):
+            rel = req.query.get("path", "")
+            return {"path": rel, "text": guide.read_source(rel)}
+
+        @r("GET", "/api/guide/source.zip")
+        def guide_zip(req):
+            name = f"AIVideoStudio-{__version__}-source.zip"
+            return RawResponse(guide.source_zip(__version__), "application/zip", {"Content-Disposition": f'attachment; filename="{name}"'})
+
+        # ---------------- 运行状态
+        @r("GET", "/api/status/processes")
+        def processes(req):
+            return procinfo.snapshot()
+
         @r("POST", "/api/shutdown")
         def shutdown(req):
             self.jobs.cancel()
+            procinfo.kill_children()
             if self.shutdown_cb:
                 threading.Timer(0.3, self.shutdown_cb).start()
             return {"ok": True}
@@ -356,8 +391,8 @@ class App:
 
 
 class RawResponse:
-    def __init__(self, data, ctype):
-        self.data, self.ctype = data, ctype
+    def __init__(self, data, ctype, headers=None):
+        self.data, self.ctype, self.headers = data, ctype, headers or {}
 
 
 def _load(pid):
@@ -459,7 +494,7 @@ def make_handler(app):
                         if mt:
                             res = fn(Request(self, query, body), **mt.groupdict())
                             if isinstance(res, RawResponse):
-                                return self._send(200, res.data, res.ctype)
+                                return self._send(200, res.data, res.ctype, res.headers)
                             return self._json(200, res)
                     raise ApiError(404, "接口不存在")
                 if path.startswith("/media/"):

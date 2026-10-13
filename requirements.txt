@@ -2,6 +2,7 @@
 Pillow>=10.0
 imageio-ffmpeg>=0.4.9   # 自带 Windows / macOS 的 ffmpeg，无需另装
 certifi                 # macOS 上 python.org 版 Python 访问 HTTPS 需要
+psutil>=5.9             # 「运行状态」页读取进程和内存（没有时退回 /proc 或 ps）
 
 # 可选（需要时取消注释）
 # edge-tts>=6.1         # 免费在线配音（非官方接口）
