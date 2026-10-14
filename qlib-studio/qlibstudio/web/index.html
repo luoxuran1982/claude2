@@ -160,7 +160,8 @@
     <p class="muted" id="x-range-note"></p>
     <div class="form-row">
       <label class="switch"><input type="checkbox" id="x-rolling"> 滚动训练：测试期每隔</label>
-      <input type="number" id="x-step" class="w5" value="63" min="20" max="252"><span>个交易日重新训练一次（训练、验证窗口长度不变，跟着往后滑）</span>
+      <input type="number" id="x-step" class="w5" value="63" min="20" max="252"><span>个交易日重新训练一次；训练窗口</span>
+      <select id="x-expand"><option value="1">起点固定、越来越长（上游 RollingGen 默认）</option><option value="0">长度固定、往后滑</option></select>
     </div>
     <h3>回测</h3>
     <div class="form-grid">
@@ -238,6 +239,12 @@
       <label class="switch"><input type="checkbox" id="cmp-common" checked> 收益指标按共同区间重新计算</label>
       <button class="btn primary" id="cmp-go" type="button">对比所选</button>
     </div>
+    <details class="help"><summary>QuantLab 还是 1.1、没有「导出实验结果」？直接读它的实验目录</summary>
+      <p>QuantLab 每次实验保存在它的数据目录 <code>runs/&lt;编号&gt;/</code>（Windows 一般是 <code>%LOCALAPPDATA%\QuantLab\runs\…</code>，
+        macOS 是 <code>~/Library/Application Support/QuantLab/runs/…</code>），里面有 summary.json、nav.csv。填这个目录，研究台按同样的交换格式转换后导入。</p>
+      <div class="path-row"><input id="cmp-qldir" placeholder="…/QuantLab/runs/r20261014_120000_000"><button class="btn small" id="cmp-qldir-pick" type="button">选择…</button>
+        <button class="btn" id="cmp-qldir-go" type="button">从 QuantLab 实验目录导入</button></div>
+    </details>
     <div class="table-wrap" id="cmp-items"></div>
   </div>
   <div class="card" id="cmp-result" hidden>

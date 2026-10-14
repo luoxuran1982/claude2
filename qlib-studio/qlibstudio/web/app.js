@@ -274,7 +274,7 @@
     if (p.label_horizon) $("x-horizon").value = p.label_horizon;
     if (p.costs) { $("x-open").value = p.costs.open_cost; $("x-close").value = p.costs.close_cost; $("x-min").value = p.costs.min_cost; }
     if (p.account) $("x-account").value = p.account;
-    if (p.rolling) { $("x-rolling").checked = !!p.rolling.enabled; $("x-step").value = p.rolling.step_days || 63; }
+    if (p.rolling) { $("x-rolling").checked = !!p.rolling.enabled; $("x-step").value = p.rolling.step_days || 63; $("x-expand").value = p.rolling.expanding === false ? "0" : "1"; }
   }
   let calendarInfo = null;
   async function fillExpDatasets() {
@@ -315,7 +315,7 @@
     return {
       dataset: $("x-dataset").value, pool: $("x-pool").value, factors: $("x-factors").value, model: $("x-model").value,
       segments: { train: [$("x-train0").value, $("x-train1").value], valid: [$("x-valid0").value, $("x-valid1").value], test: [$("x-test0").value, $("x-test1").value] },
-      rolling: { enabled: $("x-rolling").checked, step_days: +$("x-step").value },
+      rolling: { enabled: $("x-rolling").checked, step_days: +$("x-step").value, expanding: $("x-expand").value === "1" },
       label_horizon: +$("x-horizon").value, deal_price: $("x-deal").value, limit: $("x-limit").value, benchmark: $("x-bench").value,
       strategy: { topk: +$("x-topk").value, n_drop: +$("x-ndrop").value },
       costs: { open_cost: +$("x-open").value, close_cost: +$("x-close").value, min_cost: +$("x-min").value },
@@ -424,7 +424,7 @@
     const r = report, m = r.metrics, c = r.config, M = catalog.models;
     $("r-title").textContent = r.name;
     $("r-sub").textContent = `数据集「${r.dataset.title}」· 股票池 ${c.pool} · ${c.factors} · ${M[c.model] || c.model} · 训练 ${c.segments.train.join("~")} · 验证 ${c.segments.valid.join("~")} · 测试 ${c.segments.test.join("~")}`
-      + `${c.rolling.enabled ? ` · 滚动训练每 ${c.rolling.step_days} 天` : ""} · 基准 ${r.benchmark} · Qlib ${r.qlib.version} · 用时 ${r.elapsed} 秒`;
+      + `${c.rolling.enabled ? ` · 滚动训练每 ${c.rolling.step_days} 天（${c.rolling.expanding === false ? "固定长度" : "扩展窗口"}）` : ""} · 基准 ${r.benchmark} · Qlib ${r.qlib.version} · 用时 ${r.elapsed} 秒`;
     $("r-warn").innerHTML = r.dataset.demo ? '<div class="banner warn small">这是用<b>演示数据（模拟 A 股）</b>跑的结果，只用来检验流程，不代表任何真实策略的表现。</div>' : "";
     const tile = (k, v, cl, sub) => `<div class="tile"><div class="k">${k}</div><div class="v ${cl || ""}">${v}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
     $("r-tiles").innerHTML = tile("累计收益", pct(m.total_return), cls(m.total_return), `${m.start} ~ ${m.end}，${m.days} 天`)
@@ -557,6 +557,12 @@
     }
     e.target.value = "";
     loadCompareItems();
+  };
+  $("cmp-qldir-pick").onclick = () => pick("folder", "cmp-qldir", false);
+  $("cmp-qldir-go").onclick = async () => {
+    const d = $("cmp-qldir").value.trim(); if (!d) return toast("请先填写 QuantLab 的实验目录");
+    try { const r = await api("/api/compare/import", { quantlab_dir: d }); toast(`已导入：${r.app} · ${r.name}`); loadCompareItems(); }
+    catch (e) { toast(e.message, 9000); }
   };
   $("cmp-go").onclick = async () => {
     const keys = [...document.querySelectorAll("#cmp-items input:checked")].map(i => i.dataset.key);

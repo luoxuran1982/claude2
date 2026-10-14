@@ -184,7 +184,10 @@ class App:
 
     def compare_import(self, body: dict) -> dict:
         content = body.get("content")
-        if body.get("path"):
+        if body.get("quantlab_dir"):  # QuantLab 1.1 的实验目录：转换成交换格式再存
+            x = compare.from_quantlab_run_dir(Path(str(body["quantlab_dir"]).strip()).expanduser())
+            content = json.dumps(x, ensure_ascii=False).encode("utf-8")
+        elif body.get("path"):
             content = Path(str(body["path"])).expanduser().read_bytes()
         if isinstance(content, str):
             content = content.encode("utf-8")

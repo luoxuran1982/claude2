@@ -89,6 +89,52 @@ def export_from_result(res: dict) -> dict:
     }
 
 
+def from_quantlab_run_dir(run_dir) -> dict:
+    """QuantLab 1.1 的实验目录（<QuantLab 数据目录>/runs/<编号>/，含 summary.json、nav.csv、config.json）→ 交换格式。
+
+    在 QuantLab 自己的「导出实验结果」功能（1.2.0）出来之前，可以用这个直接读它的实验目录；字段对应关系：
+    perf.cagr → annual_return，perf.excess_cagr → excess_annual_return，ic.ic.mean / ic.rank_ic.mean → ic_mean / rank_ic_mean，
+    ic.*.ir → icir / rank_icir，trade_stats.turnover_annual ÷ 244 → turnover（日均），nav.csv 的 nav / bench 列 → 日收益。"""
+    d = Path(run_dir)
+    if not (d / "summary.json").is_file() or not (d / "nav.csv").is_file():
+        raise FormatError(f"{d} 不是 QuantLab 的实验目录（应有 summary.json 和 nav.csv）")
+    s = json.loads((d / "summary.json").read_text(encoding="utf-8"))
+    cfg = json.loads((d / "config.json").read_text(encoding="utf-8")) if (d / "config.json").is_file() else {}
+    nav = pd.read_csv(d / "nav.csv", index_col=0, parse_dates=True)
+    ret = nav["nav"].pct_change().fillna(0.0)
+    bret = nav["bench"].pct_change().fillna(0.0) if "bench" in nav else None
+    perf, ic, ts = s.get("perf") or {}, s.get("ic") or {}, s.get("trade_stats") or {}
+    bt, lab, w = cfg.get("backtest") or {}, cfg.get("label") or {}, cfg.get("walk") or {}
+    ics = s.get("ic_series") or {}
+    turn = ts.get("turnover_annual")
+    return validate({
+        "format": FORMAT, "format_version": VERSION, "app": "QuantLab", "app_version": s.get("version"),
+        "engine": "QuantLab（由 Qlib 量化研究台从实验目录转换）", "run_id": s.get("id"), "name": s.get("name"),
+        "created": s.get("created"),
+        "dataset": {"title": s.get("dataset_title"), "source": "demo" if s.get("demo_data") else None,
+                    "n_stocks": s.get("n_stocks")},
+        "period": {"start": perf.get("start"), "end": perf.get("end")},
+        "settings": {"factors": f"QuantLab 因子 {s.get('n_features')} 个", "n_features": s.get("n_features"),
+                     "models": s.get("models"), "horizon": s.get("horizon"), "top_k": s.get("top_k"),
+                     "rebalance": f"每 {bt.get('rebalance_days')} 个交易日，持仓缓冲 {bt.get('buffer')} 倍" if bt else None,
+                     "deal_price": "T+1 开盘价", "benchmark": s.get("benchmark"),
+                     "costs": (f"佣金 {bt.get('commission')}（最低 {bt.get('min_commission')} 元）、印花税 {bt.get('stamp_tax')}、"
+                               f"滑点 {bt.get('slippage')}") if bt else None,
+                     "rolling": {"train_days": w.get("train_days"), "retrain_days": w.get("retrain_days")} if w else None,
+                     "label": lab or None},
+        "metrics": {"total_return": perf.get("total_return"), "annual_return": perf.get("cagr"),
+                    "volatility": perf.get("volatility"), "sharpe": perf.get("sharpe"), "max_drawdown": perf.get("max_drawdown"),
+                    "excess_annual_return": perf.get("excess_cagr"), "info_ratio": perf.get("info_ratio"),
+                    "ic_mean": (ic.get("ic") or {}).get("mean"), "rank_ic_mean": (ic.get("rank_ic") or {}).get("mean"),
+                    "icir": (ic.get("ic") or {}).get("ir"), "rank_icir": (ic.get("rank_ic") or {}).get("ir"),
+                    "turnover": turn / 244 if isinstance(turn, (int, float)) else None,
+                    "win_rate_daily": perf.get("win_rate_daily")},
+        "daily": {"dates": [x.strftime("%Y-%m-%d") for x in nav.index], "return": [round(float(v), 8) for v in ret],
+                  "bench_return": [round(float(v), 8) for v in bret] if bret is not None else []},
+        "ic": {"dates": ics.get("dates") or [], "ic": ics.get("ic") or [], "rank_ic": ics.get("rank_ic") or []},
+    })
+
+
 def validate(obj) -> dict:
     """检查交换格式，返回规范化后的对象；不合格抛 FormatError（中文原因）。"""
     if not isinstance(obj, dict):

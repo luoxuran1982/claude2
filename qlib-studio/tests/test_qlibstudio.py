@@ -178,22 +178,25 @@ class FutuTest(TempDir):
     def test_download_cache_and_quota(self):
         ctx = FakeQuoteContext(total_quota=3, fail_codes={"SZ.000002"})
         fac = lambda h, p: (ctx, fake_module)  # noqa: E731
-        r = futu.download(self.tmp, ["SH.600000", "SZ.000001", "SZ.000002"], "2024-01-01", "2024-12-31", factory=fac)
+        # 模拟数据在 2022 年 11 月中旬有一次 2:1 送转；这个区间跨过它
+        r = futu.download(self.tmp, ["SH.600000", "SZ.000001", "SZ.000002"], "2022-06-01", "2023-06-30", factory=fac)
         self.assertEqual({x["code"] for x in r["downloaded"]}, {"SH.600000", "SZ.000001"})
         self.assertIn("代码无效", r["failed"][0]["reason"])
         self.assertEqual(r["quota_before"]["remain"], 3)
         n_req = len(ctx.requests)
         # 已覆盖的区间不再请求
-        r2 = futu.download(self.tmp, ["SH.600000"], "2024-03-01", "2024-06-30", factory=fac)
+        r2 = futu.download(self.tmp, ["SH.600000"], "2022-09-01", "2023-03-31", factory=fac)
         self.assertEqual(r2["skipped"], ["SH.600000"])
         self.assertEqual(len(ctx.requests), n_req)
-        # 扩展到 2025：只请求缺的那段
-        futu.download(self.tmp, ["SH.600000"], "2024-01-01", "2025-03-31", factory=fac)
-        self.assertTrue(all(req[1] >= "2025-01-01" for req in ctx.requests[n_req:]), ctx.requests[n_req:])
+        # 往后扩展到 2023 年底：只请求缺的那段
+        futu.download(self.tmp, ["SH.600000"], "2022-06-01", "2023-12-31", factory=fac)
+        self.assertTrue(ctx.requests[n_req:] and all(req[1] >= "2023-07-01" for req in ctx.requests[n_req:]), ctx.requests[n_req:])
         # 后复权因子：模拟数据中途 2:1 送转，因子从 1 变到 2，复权价连续
         df = futu.Cache(self.tmp).frame("SH.600000")
         self.assertAlmostEqual(df["factor"].iloc[0], 1.0, places=3)
         self.assertAlmostEqual(df["factor"].iloc[-1], 2.0, places=2)
+        adj = df["close"] * df["factor"]
+        self.assertLess((adj / adj.shift(1) - 1).abs().max(), 0.12, "复权价在送转日不应跳空")
         # 额度不够时直接说明原因
         with self.assertRaises(futu.FutuError) as e:
             futu.download(self.tmp, ["SH.600010", "SH.600011"], "2024-01-01", "2024-12-31", factory=fac)
@@ -313,6 +316,9 @@ class ExperimentTest(unittest.TestCase):
         cal = datasets.calendar(datasets.path(root, ds))
         folds = experiment.plan_rolling(cal, seg, 40)
         self.assertGreater(len(folds), 2)
+        self.assertTrue(all(f["train"][0] == seg["train"][0] for f in folds), "扩展窗口：训练起点固定")
+        slide = experiment.plan_rolling(cal, seg, 40, expanding=False)
+        self.assertGreater(slide[-1]["train"][0], seg["train"][0], "滑动窗口：训练起点往后移")
         self.assertEqual(folds[0]["test"][0], seg["test"][0])
         self.assertEqual(folds[-1]["test"][1], seg["test"][1])
         for f in folds:  # 每段：训练 < 验证 < 测试，不重叠
@@ -332,7 +338,8 @@ class ExperimentTest(unittest.TestCase):
             self.assertTrue(trades)
             self.assertTrue(all(t["shares"] % 100 == 0 for t in trades), "一手 100 股")
             pos = json.loads((out / "positions.json").read_text(encoding="utf-8"))
-            self.assertLessEqual(max(len(p["holdings"]) for p in pos), 10)
+            # TopkDropout 保持 10 只；跌停 / 停牌卖不出时会暂时多于 10 只（上游行为），但不会超过 10 + n_drop
+            self.assertLessEqual(max(len(p["holdings"]) for p in pos), 12)
             exp = compare.load(out / "export.json")
             self.assertEqual(exp["app"], "Qlib 量化研究台")
             self.assertFalse((out / "mlruns").exists())

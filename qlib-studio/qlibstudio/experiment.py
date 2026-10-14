@@ -61,7 +61,7 @@ DEFAULTS = {
     "model": "lgbm",
     "pool": "stocks",
     "segments": {"train": ["", ""], "valid": ["", ""], "test": ["", ""]},  # 留空 = 按数据区间 6:2:2 自动切
-    "rolling": {"enabled": False, "step_days": 63},
+    "rolling": {"enabled": False, "step_days": 63, "expanding": True},
     "label_horizon": 1,
     "deal_price": "close",
     "strategy": {"topk": 20, "n_drop": 2},
@@ -137,6 +137,7 @@ def normalize(cfg_in: dict, data_root: Path) -> dict:
     if cfg["account"] < 10000:
         errors.append("初始资金至少 1 万元")
     cfg["rolling"]["enabled"] = bool(cfg["rolling"]["enabled"])
+    cfg["rolling"]["expanding"] = bool(cfg["rolling"].get("expanding", True))
     cfg["rolling"]["step_days"] = int(cfg["rolling"]["step_days"])
     if cfg["rolling"]["enabled"] and not 20 <= cfg["rolling"]["step_days"] <= 252:
         errors.append("滚动步长须在 20~252 个交易日")
@@ -226,8 +227,9 @@ def fit_kwargs(cfg: dict) -> dict:
     return {}
 
 
-def plan_rolling(cal: list[str], seg: dict, step: int) -> list[dict]:
-    """按上游 RollingGen 的思路切分：测试期每 step 个交易日一段；训练、验证窗口长度不变，跟着往后滑。"""
+def plan_rolling(cal: list[str], seg: dict, step: int, expanding: bool = True) -> list[dict]:
+    """按上游 RollingGen 的思路切分：测试期每 step 个交易日一段，验证窗口长度不变、跟着往后滑；
+    训练窗口 expanding=True 时起点固定、越来越长（RollingGen 默认的 ROLL_EX），False 时长度固定往后滑（ROLL_SD）。"""
     pos = {d: i for i, d in enumerate(cal)}
 
     def idx(d: str, side: str) -> int:
@@ -246,7 +248,7 @@ def plan_rolling(cal: list[str], seg: dict, step: int) -> list[dict]:
         v1 = k - gap_vt
         v0 = v1 - n_valid + 1
         t1 = v0 - gap_tv
-        t0 = max(t1 - n_train + 1, tr0)
+        t0 = tr0 if expanding else max(t1 - n_train + 1, tr0)
         folds.append({"train": [cal[t0], cal[t1]], "valid": [cal[v0], cal[v1]], "test": [cal[k], cal[end]]})
         k = end + 1
     del pos
@@ -317,7 +319,8 @@ def _run(cfg_in: dict, data_root: Path, out: Path, progress: Progress) -> dict:
     handler = make_handler(cfg)
     progress(0.40, "因子计算完成，开始训练")
     cal = [d.strftime("%Y-%m-%d") for d in D.calendar(start_time=seg["train"][0], end_time=seg["test"][1])]
-    folds = plan_rolling(datasets.calendar(Path(ds_dir)), seg, cfg["rolling"]["step_days"]) if cfg["rolling"]["enabled"] \
+    folds = plan_rolling(datasets.calendar(Path(ds_dir)), seg, cfg["rolling"]["step_days"], cfg["rolling"]["expanding"]) \
+        if cfg["rolling"]["enabled"] \
         else [{"train": seg["train"], "valid": seg["valid"], "test": seg["test"]}]
     preds, fold_info, importance = [], [], None
     for i, f in enumerate(folds):

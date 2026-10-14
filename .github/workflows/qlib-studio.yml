@@ -36,9 +36,14 @@ jobs:
         run: python packaging/build_ext.py
       - name: 外壳测试（数据转换、质量检查、实验、模拟 OpenD、社区数据集、对比格式、接口）
         run: python -m unittest discover -s tests -v
-      - name: 上游 Qlib 自带测试（离线可跑的部分）
+      - name: 上游 Qlib 自带测试（离线可跑的部分；要 PyTorch / plotly 的两组除外）
         working-directory: qlib-studio/upstream/tests
-        run: python -m pytest -q -p no:cacheprovider misc/test_index_data.py misc/test_sepdf.py misc/test_utils.py security test_structured_cov_estimator.py backtest/test_soft_topk_strategy.py backtest/test_soft_topk_strategy_cold_start.py data_mid_layer_tests/test_processor.py ops/test_special_ops.py
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/qlib-studio/upstream"
+          python -m pytest -q -p no:cacheprovider misc/test_index_data.py misc/test_sepdf.py misc/test_utils.py security \
+            test_structured_cov_estimator.py backtest/test_soft_topk_strategy.py backtest/test_soft_topk_strategy_cold_start.py \
+            data_mid_layer_tests/test_processor.py ops/test_special_ops.py \
+            --ignore=security/test_eval_registries.py --ignore=security/test_artifact_trust_api.py
       - name: 网页纯函数测试
         run: node tests/web.test.js
       - name: 源码运行冒烟测试

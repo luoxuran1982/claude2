@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#4a505a"/></marker>
+    <style>
+      .box{fill:#fff;stroke:#9aa3af;stroke-width:1.2}
+      .main{fill:#e6eefb;stroke:#1f5fbf;stroke-width:1.5}
+      .work{fill:#fff4dc;stroke:#b7791f;stroke-width:1.5}
+      .up{fill:#e3f4ea;stroke:#2b8a3e;stroke-width:1.5}
+      .ext{fill:#f3f0ff;stroke:#7048e8;stroke-width:1.3;stroke-dasharray:5 3}
+      .data{fill:#f8f9fa;stroke:#495057;stroke-width:1.2}
+      .t{font-weight:600;fill:#13161b}
+      .s{fill:#4a505a;font-size:12px}
+      .l{stroke:#4a505a;stroke-width:1.3;fill:none;marker-end:url(#a)}
+      .lt{fill:#4a505a;font-size:11.5px}
+    </style>
+  </defs>
+  <rect width="1000" height="640" fill="#ffffff"/>
+  <text x="20" y="30" class="t" font-size="18">Qlib 量化研究台 1.0.0 · 系统架构</text>
+
+  <!-- 主进程 -->
+  <rect x="20" y="50" width="430" height="300" rx="12" class="main"/>
+  <text x="36" y="76" class="t">主进程（QlibStudio，一个 PID）</text>
+  <rect x="40" y="92" width="390" height="70" rx="8" class="box"/>
+  <text x="54" y="116" class="t">应用窗口 · pywebview</text>
+  <text x="54" y="138" class="s">macOS WKWebView / Windows WebView2；网页 = qlibstudio/web/</text>
+  <text x="54" y="154" class="s">index.html · app.js · guide.js · md.js · zoom.js · ECharts</text>
+  <rect x="40" y="180" width="390" height="150" rx="8" class="box"/>
+  <text x="54" y="204" class="t">本机服务 · server.py（线程）</text>
+  <text x="54" y="226" class="s">只监听 127.0.0.1 随机端口；Host / Origin / 令牌校验</text>
+  <text x="54" y="246" class="s">数据集 · 实验结果 · 报告 · 对比 · 使用指南 · 进程表接口</text>
+  <text x="54" y="270" class="t" font-size="13">任务管理 · jobs.py</text>
+  <text x="54" y="290" class="s">同一时间一个任务；启动 / 取消工作进程；读进度文件</text>
+  <text x="54" y="310" class="s">退出时结束工作进程并确认，再释放端口</text>
+  <path d="M235 162 L235 180" class="l"/>
+
+  <!-- 工作进程 -->
+  <rect x="520" y="50" width="460" height="300" rx="12" class="work"/>
+  <text x="536" y="76" class="t">工作进程（同一程序 --worker，按需启动、做完即退出）</text>
+  <text x="536" y="98" class="s">worker.py：每 2 秒检查主进程，主进程不在了就自行退出</text>
+  <rect x="540" y="112" width="200" height="104" rx="8" class="box"/>
+  <text x="552" y="134" class="t" font-size="13">数据任务</text>
+  <text x="552" y="154" class="s">sources / readers（QuantLab）</text>
+  <text x="552" y="172" class="s">futu.py · community.py</text>
+  <text x="552" y="190" class="s">convert.py → dump_bin</text>
+  <text x="552" y="208" class="s">quality.py（读 .bin）</text>
+  <rect x="756" y="112" width="208" height="104" rx="8" class="box"/>
+  <text x="768" y="134" class="t" font-size="13">实验 · experiment.py</text>
+  <text x="768" y="154" class="s">Alpha158 / Alpha360</text>
+  <text x="768" y="172" class="s">LGB / XGB / CatBoost / 线性</text>
+  <text x="768" y="190" class="s">calc_ic · TopkDropout 回测</text>
+  <text x="768" y="208" class="s">risk_analysis → result.json</text>
+  <rect x="540" y="232" width="424" height="100" rx="8" class="up"/>
+  <text x="552" y="256" class="t">上游 Qlib 0.9.8（upstream/，MIT）</text>
+  <text x="552" y="278" class="s">qlib.data（日历 / 股票池 / 表达式引擎 + Cython 滚动算子）</text>
+  <text x="552" y="296" class="s">qlib.contrib.data.handler · qlib.data.dataset · qlib.contrib.model</text>
+  <text x="552" y="314" class="s">qlib.backtest（Exchange 涨跌停 / 一手 / 费用）· scripts/dump_bin.py</text>
+  <path d="M640 216 L640 232" class="l"/><path d="M860 216 L860 232" class="l"/>
+
+  <path d="M430 270 C 480 270, 480 190, 540 190" class="l"/>
+  <text x="446" y="214" class="lt">启动 / 取消</text>
+  <path d="M540 300 C 490 300, 480 320, 430 320" class="l"/>
+  <text x="440" y="342" class="lt">progress.json · result.json · log.txt</text>
+
+  <!-- 数据目录 -->
+  <rect x="20" y="380" width="610" height="240" rx="12" class="data"/>
+  <text x="36" y="406" class="t">用户数据目录</text>
+  <text x="140" y="406" class="s">macOS ~/Library/Application Support/QlibStudio/ · Windows %LOCALAPPDATA%\QlibStudio\</text>
+  <text x="40" y="434" class="s">datasets/&lt;编号&gt;/   Qlib 格式：calendars/day.txt · instruments/*.txt · features/&lt;代码&gt;/*.day.bin</text>
+  <text x="40" y="454" class="s">                      + meta.json · names.json · quality.json</text>
+  <text x="40" y="478" class="s">futu-cache/          富途日 K 缓存（不复权价 + 复权因子）与 index.json（已覆盖日期）</text>
+  <text x="40" y="502" class="s">downloads/           社区数据集下载中的 qlib_bin.tar.gz.part（断点续传）</text>
+  <text x="40" y="526" class="s">runs/&lt;编号&gt;/        config · result · positions · trades · pred.csv · export.json（交换格式）</text>
+  <text x="40" y="550" class="s">compare/             导入的 QuantLab 结果文件</text>
+  <text x="40" y="574" class="s">jobs/&lt;编号&gt;/        job.json · progress.json · result.json · log.txt · pid.txt</text>
+  <text x="40" y="598" class="s">settings.json · qlibstudio.log · webview/（缩放档位等本机存储）</text>
+
+  <!-- 外部 -->
+  <rect x="660" y="380" width="320" height="110" rx="12" class="ext"/>
+  <text x="676" y="406" class="t">富途 / moomoo OpenD（外部，用户自己启动）</text>
+  <text x="676" y="428" class="s">本机 127.0.0.1:11111；futu-api 请求日 K、额度</text>
+  <text x="676" y="448" class="s">不是本应用的进程，进程表里单独列出、不计入合计</text>
+  <text x="676" y="468" class="s">只有点「测试连接 / 下载」时才连</text>
+  <rect x="660" y="510" width="320" height="110" rx="12" class="ext"/>
+  <text x="676" y="536" class="t">GitHub：chenditc/investment_data</text>
+  <text x="676" y="558" class="s">qlib_bin.tar.gz（约 570 MB），Range 断点续传</text>
+  <text x="676" y="578" class="s">只有点「下载最新一期」时才连</text>
+  <text x="676" y="598" class="s">QuantLab 结果文件：用户导入的本地 JSON</text>
+
+  <path d="M640 350 L640 380" class="l"/>
+  <path d="M760 350 L780 380" class="l"/>
+  <text x="776" y="368" class="lt">futu-api</text>
+  <path d="M968 340 C 995 400, 995 470, 975 510" class="l"/>
+  <text x="900" y="504" class="lt">HTTPS 下载</text>
+</svg>
