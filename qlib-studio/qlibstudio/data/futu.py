@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from . import datasets
 from .market import normalize_symbol
 
 HOST, PORT = "127.0.0.1", 11111
+CONNECT_TIMEOUT = 20
 COLS = ["date", "open", "high", "low", "close", "volume", "amount", "factor"]
 
 
@@ -96,8 +98,24 @@ def real_context(host: str = HOST, port: int = PORT):
         futu.SysConfig.set_all_thread_daemon(True)  # 退出时不被 futu-api 的后台线程拖住
     except Exception:  # noqa: BLE001
         pass
-    ctx = futu.OpenQuoteContext(host=host, port=port)
-    return ctx, futu
+    # futu-api 连上端口后会等 OpenD 的握手；端口上不是 OpenD（或 OpenD 还没登录完）时它会一直重试、不返回。
+    # 放到线程里等最多 20 秒，超时给出原因（工作进程结束时这个线程随进程一起退出）。
+    box: dict = {}
+
+    def make():
+        try:
+            box["ctx"] = futu.OpenQuoteContext(host=host, port=port)
+        except Exception as exc:  # noqa: BLE001
+            box["err"] = exc
+    th = threading.Thread(target=make, name="futu-connect", daemon=True)
+    th.start()
+    th.join(CONNECT_TIMEOUT)
+    if "err" in box:
+        raise FutuError(f"连接富途 OpenD 失败：{box['err']}")
+    if "ctx" not in box:
+        raise FutuError(f"{host}:{port} 上有程序在监听，但 {CONNECT_TIMEOUT} 秒内没有完成 OpenD 握手：可能这个端口上不是 OpenD，"
+                        "或 OpenD 还在登录 / 需要验证码。请看一眼 OpenD 窗口的状态")
+    return box["ctx"], futu
 
 
 class Cache:

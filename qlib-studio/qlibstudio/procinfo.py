@@ -119,7 +119,7 @@ def snapshot(workers: dict[int, str] | None = None, job_running: bool = False) -
         "processes": processes,
         "total_mib": round(sum(known), 1) if known else None,
         "total_note": "合计是各进程数值相加，进程间共享的内存（例如同一程序文件的代码段）可能被重复计算" if len(known) > 1 else None,
-        "backend_note": ("本机服务和任务管理是主进程里的线程（共用主进程 PID），没有常驻的独立后台；"
+        "backend_note": ("无独立后台：本机服务和任务管理是主进程里的线程（共用主进程 PID）；"
                          "导入数据、下载、训练和回测在需要时才启动一个独立的工作进程，任务结束进程就退出。"
                          + ("" if worker_listed else "当前没有正在运行的工作进程。")),
         "job_running": job_running,

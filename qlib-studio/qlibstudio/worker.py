@@ -140,8 +140,9 @@ def execute(job: dict, rep: Reporter) -> dict:  # noqa: C901
                     "summary": f"已导入 {meta['n_symbols']} 只（{meta['start']} ~ {meta['end']}）" + (f"，{len(problems)} 个文件读取有问题" if problems else "")}
         if kind == "futu-check":
             rep(0.1, f"连接 OpenD {p.get('host', futu.HOST)}:{p.get('port', futu.PORT)}")
-            q = futu.check(root, p.get("host", futu.HOST), int(p.get("port", futu.PORT)), factory=_futu_factory())
-            return {"ok": True, "quota": q, "fake": _futu_factory() is not None,
+            fac = None if p.get("force_real") else _futu_factory()  # force_real：冒烟测试用，确认安装包里的 futu-api 能加载
+            q = futu.check(root, p.get("host", futu.HOST), int(p.get("port", futu.PORT)), factory=fac)
+            return {"ok": True, "quota": q, "fake": fac is not None,
                     "summary": f"已连上 OpenD：历史 K 线额度已用 {q['used']} / 共 {q['total']}，剩余 {q['remain']}"}
         if kind == "futu-download":
             codes = futu.parse_codes(str(p.get("codes", "")))

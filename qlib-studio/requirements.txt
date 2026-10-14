@@ -1,0 +1,34 @@
+# Qlib 量化研究台运行依赖（Python 3.12；安装包里就是这些版本）。
+# 上游 Qlib 0.9.8 的完整依赖见 upstream/pyproject.toml；这里只装研究台实际用到的部分：
+# 不装 jupyter / nbconvert / matplotlib / cvxpy / pymongo / torch（研究台的流程用不到，见 docs/03）。
+numpy==2.2.6
+pandas==2.2.3
+pyyaml==6.0.3
+ruamel.yaml==0.19.1
+filelock==3.29.7
+dill==0.4.1
+fire==0.7.1
+tqdm==4.70.1
+loguru==0.7.3
+joblib==1.6.0
+pyarrow==26.0.0
+pydantic-settings==2.15.0
+setuptools-scm==10.3.4
+redis==8.1.0
+python-redis-lock==4.0.1
+mlflow-skinny==3.12.0
+gym==0.26.2
+scikit-learn==1.9.1
+scipy==1.18.1
+lightgbm==4.7.0
+# XGBoost：Windows/Linux 用只含 CPU 的 xgboost-cpu（同一个 xgboost 模块，小 45 MB）；macOS 官方包本来就只有 CPU
+xgboost-cpu==3.4.1; sys_platform != "darwin"
+xgboost==3.4.1; sys_platform == "darwin"
+catboost==1.2.10
+futu-api==10.11.7108
+psutil==7.2.2
+certifi==2026.7.22
+pywebview==6.2.1
+# 只在编译上游两个 Cython 扩展（qlib/data/_libs/rolling.pyx、expanding.pyx）时需要
+cython==3.3.0
+setuptools==84.0.0

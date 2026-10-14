@@ -382,14 +382,16 @@
     const z = zoomNow(), fs = Math.round(12 * z);
     const base = {
       textStyle: { fontSize: fs, color: css("--text-2") }, animation: false,
-      grid: { left: 60 * z, right: 24 * z, top: 44 * z, bottom: 52 * z, containLabel: true },
+      grid: { left: 16 * z, right: 24 * z, top: 58 * z, bottom: 44 * z, containLabel: true },
       tooltip: { trigger: "axis", textStyle: { fontSize: fs } },
-      legend: { top: 4, textStyle: { fontSize: fs, color: css("--text-2") }, itemWidth: 18 * z, itemHeight: 10 * z },
-      title: { textStyle: { fontSize: Math.round(13 * z), color: css("--text") } },
+      legend: { top: 26 * z, left: 0, textStyle: { fontSize: fs, color: css("--text-2") }, itemWidth: 18 * z, itemHeight: 10 * z },
+      title: { left: 0, top: 0, textStyle: { fontSize: Math.round(13 * z), color: css("--text") } },
     };
     const opt = { ...base, ...option };
     opt.grid = { ...base.grid, ...(option.grid || {}) };
     opt.legend = option.legend === false ? undefined : { ...base.legend, ...(option.legend || {}) };
+    opt.title = { ...base.title, ...(option.title || {}), textStyle: base.title.textStyle };
+    if (option.legend === false) opt.grid.top = (option.grid && option.grid.top) || 36 * z;
     const axisFont = ax => (Array.isArray(ax) ? ax : [ax]).map(a => a && ({ ...a, axisLabel: { fontSize: fs, color: css("--muted"), ...(a.axisLabel || {}) },
       nameTextStyle: { fontSize: fs } }));
     if (opt.xAxis) opt.xAxis = axisFont(opt.xAxis);
@@ -445,13 +447,13 @@
     if (!report) return;
     const r = report, d = r.daily, tab = activeReportTab();
     if (tab === "r-nav") {
-      chart("c-nav", { title: { text: "净值（测试区间，已扣费用）" }, legend: { top: 4, right: 10 },
-        xAxis: { type: "category", data: d.dates }, yAxis: [{ type: "value", scale: true, name: "净值" }, { type: "value", scale: true, name: "累计超额", axisLabel: { formatter: v => (v * 100).toFixed(0) + "%" } }],
+      chart("c-nav", { title: { text: "净值（测试区间，已扣费用）" },
+        xAxis: { type: "category", data: d.dates }, yAxis: [{ type: "value", scale: true }, { type: "value", scale: true, axisLabel: { formatter: v => (v * 100).toFixed(0) + "%" } }],
         dataZoom: dz, tooltip: { trigger: "axis", valueFormatter: v => v == null ? "—" : Number(v).toFixed(4) },
         series: [{ name: "组合", type: "line", data: d.nav, showSymbol: false, lineStyle: { width: 2 }, color: PALETTE[0] },
                  { name: "基准", type: "line", data: d.bench_nav, showSymbol: false, color: "#868e96" },
                  { name: "累计超额（Qlib 口径，右轴）", type: "line", yAxisIndex: 1, data: d.excess_cum, showSymbol: false, areaStyle: { opacity: .12 }, color: PALETTE[1] }] });
-      chart("c-dd", { title: { text: "回撤" }, legend: false, xAxis: { type: "category", data: d.dates }, grid: { top: 36 },
+      chart("c-dd", { title: { text: "回撤" }, legend: false, xAxis: { type: "category", data: d.dates }, 
         yAxis: { type: "value", axisLabel: { formatter: v => (v * 100).toFixed(0) + "%" } }, dataZoom: dz,
         series: [{ name: "回撤", type: "line", data: d.drawdown, showSymbol: false, areaStyle: { opacity: .25 }, color: "#2b8a3e" }] });
     }
@@ -460,7 +462,7 @@
       $("r-ic-tiles").innerHTML = [["IC 均值", num(ic.ic_mean, 4)], ["IC 标准差", num(ic.ic_std, 4)], ["ICIR", num(ic.icir, 3)], ["IC>0 天数占比", pct(ic.ic_positive, 1)],
         ["RankIC 均值", num(ic.rank_ic_mean, 4)], ["RankIC 标准差", num(ic.rank_ic_std, 4)], ["RankICIR", num(ic.rank_icir, 3)], ["RankIC>0 占比", pct(ic.rank_ic_positive, 1)]]
         .map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
-      chart("c-ic", { title: { text: `每日 IC / RankIC（${ic.n_days} 天）` }, legend: { top: 4, right: 10 }, xAxis: { type: "category", data: ic.dates }, yAxis: { type: "value" }, dataZoom: dz,
+      chart("c-ic", { title: { text: `每日 IC / RankIC（${ic.n_days} 天）` }, xAxis: { type: "category", data: ic.dates }, yAxis: { type: "value" }, dataZoom: dz,
         series: [{ name: "RankIC", type: "bar", data: ic.rank_ic_series, color: "rgba(31,95,191,.45)" },
                  { name: "IC", type: "bar", data: ic.ic_series, color: "rgba(232,89,12,.35)" },
                  { name: "RankIC 20 日均值", type: "line", data: rolling(ic.rank_ic_series, 20), showSymbol: false, color: PALETTE[0], lineStyle: { width: 2 } }] });
@@ -468,11 +470,11 @@
     if (tab === "r-groups") {
       const g = r.groups || {};
       if (!g.groups) { $("r-groups-note").textContent = "没有分层数据"; return; }
-      chart("c-gmean", { title: { text: "各组下一期平均收益（每天按预测分 5 组）" }, legend: false, xAxis: { type: "category", data: g.groups }, grid: { top: 36 },
+      chart("c-gmean", { title: { text: "各组下一期平均收益（每天按预测分 5 组）" }, legend: false, xAxis: { type: "category", data: g.groups }, 
         yAxis: { type: "value", axisLabel: { formatter: v => (v * 100).toFixed(2) + "%" } },
         tooltip: { trigger: "axis", valueFormatter: v => (v * 100).toFixed(3) + "%" },
         series: [{ type: "bar", data: g.mean.map((v, i) => ({ value: v, itemStyle: { color: i === 4 ? "#c92a2a" : i === 0 ? "#2b8a3e" : "#868e96" } })) }] });
-      chart("c-gcurve", { title: { text: "各组累计收益（不重叠持有期复利）" }, legend: { top: 4, right: 10 }, xAxis: { type: "category", data: g.dates }, yAxis: { type: "value", scale: true }, dataZoom: dz,
+      chart("c-gcurve", { title: { text: "各组累计收益（不重叠持有期复利）" }, xAxis: { type: "category", data: g.dates }, yAxis: { type: "value", scale: true }, dataZoom: dz,
         series: g.curves.map((cv, i) => ({ name: g.groups[i], type: "line", data: cv, showSymbol: false }))
           .concat([{ name: "多空（第5组−第1组）", type: "line", data: g.long_short, showSymbol: false, lineStyle: { type: "dashed", width: 2 }, color: "#000" }]) });
       $("r-groups-note").textContent = `${g.note}。多空日均 ${pct(g.long_short_mean, 3)}。分层看的是预测排序本身好不好，不含交易费用和涨跌停限制。`;
@@ -497,11 +499,11 @@
         ${f.map(x => `<tr><td>${x.fold}</td><td>${esc(x.train.join(" ~ "))}</td><td>${esc(x.valid.join(" ~ "))}</td><td>${esc(x.test.join(" ~ "))}</td>
           <td class="num">${x.n_pred}</td><td class="num">${x.best_iteration ?? "—"}</td><td class="num">${x.seconds}</td></tr>`).join("")}</tbody></table>`;
       const loss = (f[0] || {}).loss;
-      if (loss) chart("c-loss", { title: { text: "第 1 段训练过程（损失）" }, legend: { top: 4, right: 10 }, xAxis: { type: "category", data: Object.values(loss)[0].map((_, i) => i + 1) }, yAxis: { type: "value", scale: true },
+      if (loss) chart("c-loss", { title: { text: "第 1 段训练过程（损失）" }, xAxis: { type: "category", data: Object.values(loss)[0].map((_, i) => i + 1) }, yAxis: { type: "value", scale: true },
         series: Object.entries(loss).map(([k, v]) => ({ name: k.replace("train", "训练").replace("valid", "验证"), type: "line", data: v, showSymbol: false })) });
       else { if (charts["c-loss"]) charts["c-loss"].clear(); }
       const imp = r.importance || [];
-      if (imp.length) chart("c-imp", { title: { text: "因子重要性（LightGBM gain，前 30）" }, legend: false, grid: { left: 110 },
+      if (imp.length) chart("c-imp", { title: { text: "因子重要性（LightGBM gain，前 30）" }, legend: false,
         xAxis: { type: "value" }, yAxis: { type: "category", data: imp.map(x => x.name).reverse() }, tooltip: { trigger: "axis" },
         series: [{ type: "bar", data: imp.map(x => x.value).reverse(), color: PALETTE[0] }] });
       else { if (charts["c-imp"]) charts["c-imp"].clear(); }

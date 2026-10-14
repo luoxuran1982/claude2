@@ -148,21 +148,23 @@ def normalize(cfg_in: dict, data_root: Path) -> dict:
 
 # ---------------------------------------------------------------- Qlib 组件
 
-def init_qlib(ds_dir: str, run_dir: Path | None = None) -> None:
+def init_qlib(ds_dir: str) -> None:
     paths.ensure_upstream_importable()
     import qlib
     from qlib.constant import REG_CN
-    kw = {}
-    if run_dir is not None:
-        # 上游 LGBModel.fit 会把每轮训练/验证损失写进 MLflow（R.log_metrics），默认写到当前目录的 mlruns/。
-        # 调用方（run）已把当前目录切到本次实验目录；这里用相对路径 "mlruns"，不用 file:// 地址——
-        # 上游 expm.py 对 file:// 地址做文件锁时会去掉开头的 /，在 macOS/Linux 上把锁建到当前目录下的一串子目录里。
-        # 实验结束后删掉 mlruns/（损失曲线另存在 result.json）。
-        kw["exp_manager"] = {"class": "MLflowExpManager", "module_path": "qlib.workflow.expm",
-                             "kwargs": {"uri": "mlruns", "default_exp_name": "QlibStudio"}}
     # kernels=1：在本进程里顺序读数据，不再开多进程（打包后的程序开多进程要重新启动整个应用）
     qlib.init(provider_uri=ds_dir, region=REG_CN, kernels=1, expression_cache=None, dataset_cache=None,
-              logging_level=logging.WARNING, **kw)
+              logging_level=logging.WARNING)
+    silence_recorder()
+
+
+def silence_recorder() -> None:
+    """运行时替换（不改上游文件，见 UPSTREAM.md）：上游 LGBModel.fit 每一轮都调用 R.log_metrics 把损失写进 MLflow，
+    第一次调用会自动开一个 MLflow 实验记录，并用 shell 执行 git diff / git status 记录代码版本——
+    在桌面版里这会在实验目录外建 mlruns/，Windows 上还会闪出命令行窗口。研究台自己保存损失曲线（evals_result），
+    所以把 QlibRecorder.log_metrics 换成空函数。"""
+    from qlib.workflow import QlibRecorder
+    QlibRecorder.log_metrics = lambda self, step=None, **kwargs: None
 
 
 def label_expr(deal_price: str, horizon: int) -> str:
@@ -284,7 +286,7 @@ def _series(s: pd.Series, n=6) -> list:
 
 
 def run(cfg_in: dict, data_root: Path, out_dir: Path, progress: Progress = lambda p, m: None) -> dict:
-    """当前目录临时切到实验目录：上游 MLflow 记录、CatBoost 等写到当前目录的东西都落在这里，结束后切回。"""
+    """当前目录临时切到实验目录：上游或模型库万一往当前目录写文件，也落在实验目录里；结束后切回。"""
     import warnings
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -307,7 +309,7 @@ def _run(cfg_in: dict, data_root: Path, out: Path, progress: Progress) -> dict:
     ds_meta = datasets.read_json(Path(ds_dir) / "meta.json", {})
     names = datasets.read_json(Path(ds_dir) / "names.json", {}) or {}
     progress(0.02, "初始化 Qlib")
-    init_qlib(ds_dir, out)
+    init_qlib(ds_dir)
     from qlib.data import D
     from qlib.data.dataset import DatasetH
     seg = cfg["segments"]
@@ -344,6 +346,10 @@ def _run(cfg_in: dict, data_root: Path, out: Path, progress: Progress) -> dict:
         try:
             if cfg["model"] == "lgbm":
                 imp = model.get_feature_importance(importance_type="gain")
+                # 上游用 numpy 训练，LightGBM 里的特征名是 Column_0…；换回因子名（DatasetH 的特征列顺序）
+                cols = ds.prepare("train", col_set="feature").columns
+                names_ = {f"Column_{k}": (c[1] if isinstance(c, tuple) else str(c)) for k, c in enumerate(cols)}
+                imp.index = [names_.get(str(i), str(i)) for i in imp.index]
                 importance = imp if importance is None else importance.add(imp, fill_value=0)
                 info["best_iteration"] = int(model.model.best_iteration or 0)
         except Exception:  # noqa: BLE001
@@ -391,24 +397,12 @@ def _run(cfg_in: dict, data_root: Path, out: Path, progress: Progress) -> dict:
     (out / "positions.json").write_text(json.dumps(positions, ensure_ascii=False), encoding="utf-8")
     (out / "trades.json").write_text(json.dumps(trades, ensure_ascii=False), encoding="utf-8")
     pred.reset_index().to_csv(out / "pred.csv", index=False, float_format="%.6f")
-    _end_mlflow(out)
     from . import compare
     (out / "export.json").write_text(json.dumps(compare.export_from_result(res), ensure_ascii=False), encoding="utf-8")
     m = res["metrics"]
     progress(1.0, f"完成：年化收益 {(m.get('annual_return') or 0) * 100:.1f}%，最大回撤 {(m.get('max_drawdown') or 0) * 100:.1f}%，"
                   f"RankIC {ic_sum['rank_ic_mean']}")
     return res
-
-
-def _end_mlflow(out: Path) -> None:
-    """结束上游 LGBModel 自动开启的 MLflow 记录，再删掉 mlruns/（没开启时什么也不做）。"""
-    import shutil
-    try:
-        from qlib.workflow import R
-        R.end_exp(recorder_status="FINISHED")
-    except Exception:  # noqa: BLE001
-        pass
-    shutil.rmtree(out / "mlruns", ignore_errors=True)
 
 
 def resolve_benchmark(cfg: dict, ds_meta: dict):
