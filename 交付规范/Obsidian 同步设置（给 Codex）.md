@@ -8,7 +8,7 @@ tags: [Claude, Obsidian, 同步]
 
 ## 这套同步怎么工作
 
-1. Claude 在云端把文档推送到 GitHub 私有仓库 `luoxuran1982/claude2`。GitHub 自动把所有项目的文档汇总到一个叫 `obsidian` 的分支。
+1. Claude 在云端把文档推送到 GitHub 私有仓库 `luoxuran1982/Claude`。GitHub 自动把所有项目的文档汇总到一个叫 `obsidian` 的分支。
 2. Mac 上的 Obsidian 用 Obsidian Git 插件，每 10 分钟拉取一次这个分支，放进 vault 的 `Claude/` 文件夹。
 3. 手机通过 Obsidian 官方同步从 Mac 收到更新，手机上什么都不用装。
 
@@ -22,16 +22,16 @@ tags: [Claude, Obsidian, 同步]
 
 **背景**
 
-- 仓库：`https://github.com/luoxuran1982/claude2`（私有）。只需要其中的 `obsidian` 分支，只读。
+- 仓库：`https://github.com/luoxuran1982/Claude`（私有）。只需要其中的 `obsidian` 分支，只读。
 - vault：包含 `Codex/应用开发交付要求.md` 的那个 Obsidian vault，大概在 `/Users/你的用户名/Documents/Obsidian Vault`，请先确认。
 - 这个 vault 通过 Obsidian Sync 同步到手机。
 
 **步骤**
 
 1. 确认 `git` 可用；没有就安装 Xcode 命令行工具。
-2. 设置 GitHub 只读访问。优先用浏览器授权登录（例如 Git Credential Manager）。如果不方便，就引导我创建一个 fine-grained personal access token：只授权 `luoxuran1982/claude2` 这一个仓库，权限只给 Contents: Read-only，有效期选最长。凭据存进 macOS 钥匙串，不要写进任何文件、配置或 URL。
+2. 设置 GitHub 只读访问。优先用浏览器授权登录（例如 Git Credential Manager）。如果不方便，就引导我创建一个 fine-grained personal access token：只授权 `luoxuran1982/Claude` 这一个仓库，权限只给 Contents: Read-only，有效期选最长。凭据存进 macOS 钥匙串，不要写进任何文件、配置或 URL。
 3. 把 `obsidian` 分支 clone 到 vault 根目录下的 `Claude/` 文件夹：
-   `git clone --branch obsidian --single-branch https://github.com/luoxuran1982/claude2.git "<vault>/Claude"`
+   `git clone --branch obsidian --single-branch https://github.com/luoxuran1982/Claude.git "<vault>/Claude"`
    如果 `Claude/` 已经存在，先停下来问我。
 4. 在 Obsidian 里安装并启用社区插件「Obsidian Git」。需要我在界面上点的地方，告诉我怎么点。然后这样设置：
    - Advanced → Custom base path (Git repository path)：`Claude`
