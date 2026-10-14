@@ -1,6 +1,7 @@
 # 生成界面后台（上游 MoneyPrinterTurbo WebUI）的依赖，装进随包的独立 Python 运行时。
 # 由 packaging/make_runtime_requirements.py 根据 upstream/uv.lock（上游 commit bbe7eb9）生成，不要手改。
 # 已去掉可选的 faster-whisper 及只被它用到的包：av、ctranslate2、faster-whisper、flatbuffers、mpmath、onnxruntime、setuptools、sympy
+# 覆盖了上游锁定的版本（原因见 make_runtime_requirements.py 的 OVERRIDES）：edge-tts 7.2.7 → 7.3.1
 
 aiohappyeyeballs==2.6.1
 aiohttp==3.14.0
@@ -24,7 +25,7 @@ cryptography==49.0.0
 dashscope==1.20.14
 decorator==5.2.1
 distro==1.9.0
-edge-tts==7.2.7
+edge-tts==7.3.1
 fastapi==0.136.3
 fastuuid==0.14.0
 filelock==3.25.2

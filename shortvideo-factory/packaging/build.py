@@ -98,6 +98,7 @@ def build_runtime(payload: Path) -> Path:
     prune_site_packages(stdlib / "site-packages")
     # 冒烟：关键依赖都能导入，FFmpeg 可执行
     run([py, "-c", "import streamlit, moviepy, edge_tts, openai, litellm, imageio_ffmpeg, PIL, toml, loguru;"
+                   "print('edge-tts:', edge_tts.__version__); assert edge_tts.__version_info__ >= (7, 3, 1), 'edge-tts 太旧';"
                    "import subprocess; exe = imageio_ffmpeg.get_ffmpeg_exe(); print('ffmpeg:', exe);"
                    "subprocess.run([exe, '-version'], check=True, capture_output=True)"])
     return py
