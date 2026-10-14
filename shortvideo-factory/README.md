@@ -2,17 +2,27 @@
 
 把开源项目 [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo)（MIT 许可，GitHub 约 13 万星）包成可以双击安装的桌面应用：**给一个主题 → 大模型写文案和搜索关键词 → 从 Pexels / Pixabay 等免费素材站下载视频片段拼接 → 配音 + 字幕 + 背景音乐 → 合成竖屏或横屏短视频**。
 
-当前版本 **1.0.1**，内置上游 MoneyPrinterTurbo 1.3.8（commit `bbe7eb9`，2026-10-10）。macOS（Apple 芯片）和 Windows（x64）各有安装包，打开后是独立窗口。做这个项目的目的，是和本仓库根目录的「AI 知识视频工坊」（`studio/`）对比两种做视频的思路，见 [04 与 AI 知识视频工坊的对比](<docs/04 与AI知识视频工坊的对比.md>)。
+当前版本 **1.0.2**，内置上游 MoneyPrinterTurbo 1.3.8（commit `bbe7eb9`，2026-10-10）。macOS（Apple 芯片）和 Windows（x64）各有安装包，打开后是独立窗口。做这个项目的目的，是和本仓库根目录的「AI 知识视频工坊」（`studio/`）对比两种做视频的思路，见 [04 与 AI 知识视频工坊的对比](<docs/04 与AI知识视频工坊的对比.md>)。
 
-**1.0.1（2026-10-14）修的问题**：1.0.0 在 Windows 上配音全部失败（「failed to synthesize audio」，日志里 `403, message='Invalid response status'`，换中文声音也一样）。原因是微软 Edge 在线配音接口改了验证方式，随包的 edge-tts 7.2.7 被拒。1.0.1 把 edge-tts 升到 7.3.1（Sec-MS-GEC v2 令牌），默认配音声音改成中文「晓晓」（zh-CN-XiaoxiaoNeural），配音失败时界面提示补一段中文原因说明。装 1.0.1 覆盖旧版即可，设置和视频都保留。真实配音待用户在电脑上验收（容器里连不上微软服务器）。
+**1.0.2（2026-10-14）新增和修复**：
+
+- **新视频来源「知识讲解卡片」**（「视频来源」下拉里的「程序生成」组，免费、不联网、不需要素材钥匙）：讲「逻辑门」这类知识主题时，素材库只搜得到风景、动物，和内容不搭。新来源借用「AI 知识视频工坊」验证过的画法，不用 AI 画图，而是由程序按配音和字幕的时间把文案分成若干页，画出图文讲解页：标题、编号要点、对比两栏、流程箭头、关键数字、关键词高亮，按句子特征自动选版式；要点随配音逐条亮起，每页缓慢缩放或平移，三套配色可选。字幕、配音、背景音乐、拼接照常由上游完成。
+- **「混合」来源**：先在 Pixabay / Pexels 搜素材，够用就全用素材；搜不到或不够时用知识卡片补齐，不再让任务失败。
+- **「打开目录」在 Windows 上没反应**：改用系统自己的打开方式（Windows `os.startfile`、macOS `open`、Linux `xdg-open`），任务目录和缓存目录都修了。
+- **声音和文案语言不一致时提醒**：中文文案选了 af-ZA、zu-ZA 这类非中文声音时，选声音时和点「生成视频」时都给出中文提示（这正是「No audio was received」的常见原因）。
+- **配音失败按实际原因提示**：403（服务验证问题，请升级）、No audio received（声音和文案语言不一致，或代理节点被拒）、网络连不上，分别说明，不再一律把 403 写在第一条。
+- **素材钥匙格式检查**：Pixabay 钥匙是「数字-25 位十六进制」，Pexels 是约 56 位字母数字；填错栏位时提示「这像是 Pixabay 的钥匙」。Pexels 返回非 JSON 或 401、Pixabay 返回 400 时给出中文原因。**Pexels 目前暂停发放新钥匙，推荐用 Pixabay。**
+- **素材下载代理**：「设置 → 素材来源」里新增「素材下载代理（可选，如 http://127.0.0.1:7897）」，只有素材搜索和下载走这个代理，不用开系统代理。
+
+1.0.1 修过的问题（Edge 配音 403，随包 edge-tts 升到 7.3.1、默认中文声音「晓晓」）见 [00 项目阅读入口](<docs/00 项目阅读入口.md>)。装新版覆盖旧版即可，设置和视频都保留。
 
 ## 安装与打开
 
-安装包在仓库的 [Releases 页面](https://github.com/luoxuran1982/claude2/releases)（标签 `shortvideo-factory-v1.0.1`）。
+安装包在仓库的 [Releases 页面](https://github.com/luoxuran1982/claude2/releases)（标签 `shortvideo-factory-v1.0.2`）。
 
 | | macOS（Apple 芯片） | Windows（x64） |
 | --- | --- | --- |
-| 下载 | `ShortVideoFactory-1.0.1-macOS-arm64.dmg` | `ShortVideoFactory-Setup-1.0.1-x64.exe`（另有免安装 `ShortVideoFactory-1.0.1-windows-x64.zip`） |
+| 下载 | `ShortVideoFactory-1.0.2-macOS-arm64.dmg` | `ShortVideoFactory-Setup-1.0.2-x64.exe`（另有免安装 `ShortVideoFactory-1.0.2-windows-x64.zip`） |
 | 安装 | 双击 `.dmg`，把「AI 短视频工厂.app」拖进「应用程序」 | 双击 Setup.exe，装到 `%LOCALAPPDATA%\Programs\ShortVideoFactory\`，不需要管理员权限，开始菜单和桌面有快捷方式 |
 | 首次打开 | 没有 Apple 签名：在「应用程序」里右键 →「打开」→「打开」；仍被拦就到「系统设置 → 隐私与安全性」点「仍要打开」 | 没有代码签名：SmartScreen 提示时点「更多信息 → 仍要运行」 |
 | 退出 | ⌘Q、菜单「退出」、程序坞右键「退出」、点红色按钮关窗口、顶栏「退出」 | 点 ×、Alt+F4、任务栏右键「关闭窗口」、顶栏「退出」 |
@@ -23,15 +33,21 @@
 
 ## 第一次使用要准备的
 
-1. **大模型 API Key**（写文案、生成搜索关键词）：顶部「设置」里选服务商（DeepSeek、通义千问、Kimi、智谱、OpenAI 兼容接口、本地 Ollama 等），填 Key 和模型名，点「测试连接」。
-2. **Pexels API Key**（免费，下载视频素材）：到 <https://www.pexels.com/api/> 注册后申请，填到「设置 → 素材来源」。也可以用 Pixabay（<https://pixabay.com/api/docs/>）。
-3. 可选：把你有权使用的背景音乐（mp3）放进数据目录的 `songs/`。上游自带的音乐来源不明，没有随包分发。
+1. **大模型 API Key**（写文案、生成搜索关键词）：顶部「设置」里选服务商（DeepSeek、通义千问、Kimi、智谱、OpenAI 兼容接口、本地 Ollama 等），填 Key 和模型名，点「测试连接」。自己写好文案的话可以不填。
+2. **选视频来源**：
+   - **知识讲解卡片**（「程序生成」组）：不需要任何素材钥匙，适合讲概念、原理、步骤、对比、数字的知识类主题（逻辑门、光合作用、利率怎么算）。
+   - **Pixabay**（推荐的库存视频来源，免费）：登录 <https://pixabay.com/api/docs/>，页面里直接显示你的钥匙（「数字-25 位十六进制」），整段复制到「设置 → 素材来源 → Pixabay API Key」。适合情绪、生活、风景、美食、旅行这类实拍画面好看的主题。
+   - **Pexels**：目前暂停发放新的 API 钥匙，新申请的钥匙可能用不了；已有能用的钥匙照常可用。
+   - **混合**：先搜 Pixabay / Pexels 素材，不够时用知识卡片补齐。
+   - 访问素材站需要代理时，在「设置 → 素材来源」底部填「素材下载代理」，例如 `http://127.0.0.1:7897`。
+3. **配音声音**：默认中文「晓晓」（zh-CN-XiaoxiaoNeural）。换声音时选 zh-CN 开头的，和文案语言一致。
+4. 可选：把你有权使用的背景音乐（mp3）放进数据目录的 `songs/`。上游自带的音乐来源不明，没有随包分发。
 
 详细步骤见 [01 使用指南](<docs/01 使用指南.md>)。应用里所有 Key 只保存在你电脑上的 `config.toml`，不上传、不进仓库。
 
 ## 应用内有什么
 
-- **视频生成**：上游 MoneyPrinterTurbo 的完整界面（中文），文案、素材、配音、字幕、背景音乐、合成都在这里。
+- **视频生成**：上游 MoneyPrinterTurbo 的完整界面（中文），文案、素材、配音、字幕、背景音乐、合成都在这里；「视频来源」多了「程序生成」组（知识讲解卡片、混合）。
 - **使用指南**：离线显示本 README、[UPSTREAM.md](UPSTREAM.md) 和 `docs/` 下全部文档；「源码」里逐个只读查看外壳和上游源码（带行号），可下载源码 zip。
 - **运行状态**：本应用每个进程的职责、PID、内存（macOS RSS / Windows 工作集，MiB）和采样时间。
 - **界面缩放**：顶栏右侧「−」、百分比下拉、「＋」、「100%」，70%–120% 每 5% 一档，作用于整个界面（包括生成界面），下次打开保留。
@@ -53,7 +69,8 @@
 shortvideo-factory/
   run.py                    源码运行入口（开发用）
   svf/                      外壳：启动器、本机服务与反向代理、进程管理、使用指南、运行状态、界面
-  upstream/                 上游 MoneyPrinterTurbo 源码（bbe7eb9，打了 4 处小补丁，见 UPSTREAM.md）
+  svf_ext/                  外壳扩展（在生成界面后台里运行）：知识讲解卡片、中文出错原因、钥匙检查、素材代理、打开目录
+  upstream/                 上游 MoneyPrinterTurbo 源码（bbe7eb9，打了 6 处小补丁，见 UPSTREAM.md）
   fonts/                    随包的开源字体（思源黑体 Noto Sans SC Bold）和 OFL 许可证
   packaging/                打包脚本（PyInstaller + 随包 Python + NSIS / dmg）与 CI 冒烟测试
   tests/                    外壳单元测试、上游离线测试的筛选运行器、界面检查脚本
@@ -77,4 +94,5 @@ python packaging/build.py  # 在哪个系统上运行就打出哪个系统的安
 
 - 上游 MoneyPrinterTurbo：MIT（[upstream/LICENSE](upstream/LICENSE)）。
 - 思源黑体 Noto Sans SC、Be Vietnam Pro、Charm：SIL Open Font License 1.1（见 `fonts/OFL-*.txt`）。
+- 知识讲解卡片的画法移植自本仓库「AI 知识视频工坊」（`studio/visuals.py`，同为 Claude 手写）。
 - 用本应用做出来的视频里，素材的版权归素材站作者，按 Pexels / Pixabay 的许可使用；配音、背景音乐的使用条件见 [01 使用指南](<docs/01 使用指南.md>) 的「版权与合规」。

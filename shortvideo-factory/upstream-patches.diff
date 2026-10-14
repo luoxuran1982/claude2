@@ -1,5 +1,5 @@
 # 本项目对上游 MoneyPrinterTurbo（commit bbe7eb9）的改动，由 packaging/upstream_diff.py 生成。
-# 改动的文件：app/config/config.py、app/utils/utils.py、webui/Main.py、webui/i18n/zh.json
+# 改动的文件：app/config/config.py、app/services/task.py、app/utils/utils.py、webui/Main.py、webui/i18n/zh.json
 --- a/app/config/config.py
 +++ b/app/config/config.py
 @@ -13,7 +13,8 @@
@@ -21,6 +21,72 @@
              )
              with os.fdopen(fd, mode="w", encoding="utf-8") as f:
                  f.write(serialized_config)
+--- a/app/services/task.py
++++ b/app/services/task.py
+@@ -37,6 +37,13 @@
+ from app.services import state as sm
+ from app.utils import file_security, utils
+ from app.utils.subtitle_writer import staged_subtitle_file
++
++# [AI 短视频工厂补丁 P6] 外壳扩展 svf_ext：「程序生成」视频来源（知识讲解卡片、混合）和配音/素材失败的中文原因。
++# 单独运行上游时没有这个包，下面几处都退回上游原来的行为。
++try:
++    from svf_ext import pipeline as svf_pipeline
++except ImportError:
++    svf_pipeline = None
+ 
+ 
+ # 发布请求最长可等待数分钟，不能继续占用视频生成任务的并发名额。
+@@ -99,6 +106,8 @@
+     "volcengine_seedance", "ofox", "metaso_minimax", "muapi",
+     "loomloom", "openai_image",
+ })
++if svf_pipeline:  # [补丁 P6] 知识讲解卡片、混合（库存素材 + 卡片补齐）
++    _SUPPORTED_VIDEO_SOURCES = _SUPPORTED_VIDEO_SOURCES | frozenset(svf_pipeline.CARD_SOURCES)
+ 
+ 
+ def _get_video_music_prompt(params: VideoParams) -> str:
+@@ -609,7 +618,8 @@
+             _mark_task_failed(
+                 task_id,
+                 "audio",
+-                "failed to synthesize audio; verify the selected voice and TTS connectivity",
++                "failed to synthesize audio; verify the selected voice and TTS connectivity"
++                + (svf_pipeline.tts_failure_hint() if svf_pipeline else ""),  # [补丁 P6] 按日志补中文原因
+             )
+             return None, None, None
+         # Measure the real written audio_file, not sub_maker.cues[-1].end:
+@@ -795,6 +805,9 @@
+                 },
+             )
+             return None
++    elif svf_pipeline and params.video_source in svf_pipeline.CARD_SOURCES:
++        # [补丁 P6] 程序生成的讲解页（配音和字幕此时已生成，按它们的时间分页）
++        return svf_pipeline.prepare_materials(task_id, params, video_terms, audio_duration)
+     else:
+         logger.info(f"\n\n## downloading videos from {params.video_source}")
+         # 顺序匹配模式只在用户显式开启时生效。这里强制素材下载按关键词顺序
+@@ -896,7 +909,8 @@
+             _mark_task_failed(
+                 task_id,
+                 "materials",
+-                f"failed to download video materials from {params.video_source}",
++                f"failed to download video materials from {params.video_source}"
++                + (svf_pipeline.material_failure_hint(params.video_source) if svf_pipeline else ""),  # [补丁 P6]
+             )
+             return None
+         return downloaded_videos
+@@ -1674,7 +1688,9 @@
+ 
+     # 2. Generate terms
+     video_terms = ""
+-    if stop_at in {"terms", "materials", "video"} and params.video_source != "local":
++    if stop_at in {"terms", "materials", "video"} and params.video_source != "local" and (
++        not svf_pipeline or svf_pipeline.needs_terms(params.video_source)  # [补丁 P6] 纯知识卡片不用搜索关键词
++    ):
+         video_terms = generate_terms(task_id, params, video_script)
+         if not video_terms:
+             return _mark_task_failed(
 --- a/app/utils/utils.py
 +++ b/app/utils/utils.py
 @@ -91,7 +91,8 @@
@@ -55,7 +121,21 @@
      os.makedirs(d, exist_ok=True)
 --- a/webui/Main.py
 +++ b/webui/Main.py
-@@ -91,8 +91,9 @@
+@@ -68,6 +68,13 @@
+ from app.utils.logging_utils import configure_terminal_logger
+ from app.utils import utils
+ 
++# [AI 短视频工厂补丁 P5] 外壳扩展 svf_ext：「程序生成」视频来源、钥匙格式和语言不一致提醒、素材下载代理、
++# 配音失败中文原因、按平台打开目录。单独运行上游时没有这个包，下面几处都退回上游原来的行为。
++try:
++    from svf_ext import webui as svf_webui
++except ImportError:
++    svf_webui = None
++
+ st.set_page_config(
+     page_title="MoneyPrinterTurbo",
+     page_icon="🤖",
+@@ -91,8 +98,9 @@
  streamlit_style = f"<style>{style_file.read_text(encoding='utf-8')}</style>"
  st.markdown(streamlit_style, unsafe_allow_html=True)
  # 定义资源目录
@@ -67,7 +147,16 @@
  i18n_dir = os.path.join(root_dir, "webui", "i18n")
  config_file = os.path.join(root_dir, "webui", ".streamlit", "webui.toml")
  # 语言列表必须在会话状态初始化前可用，首次访问时才能把浏览器 locale 映射到
-@@ -191,7 +192,8 @@
+@@ -138,6 +146,8 @@
+     "ai_image": ("openai_image",),
+     "local": ("local",),
+ }
++if svf_webui:  # [补丁 P5] 「程序生成」组：知识讲解卡片、混合
++    VIDEO_SOURCE_GROUPS["program"] = svf_webui.CARD_SOURCES
+ # Upload-Post 的 API Key 与发布用户分别在两个页面管理，并且发布用户名称
+ # 不等于登录邮箱。集中维护入口可以避免多语言文案各自硬编码 URL 后发生偏差，
+ # 也方便用户从 WebUI 直接完成首次配置和后续账号维护。
+@@ -191,7 +201,8 @@
  )
  DEFAULT_SUBTITLE_SETTINGS = {
      "subtitle_enabled": True,
@@ -77,7 +166,31 @@
      "subtitle_position": "bottom",
      "subtitle_display_mode": "sentence",
      "subtitle_animation": "none",
-@@ -1901,7 +1903,7 @@
+@@ -1142,6 +1153,14 @@
+     return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+ 
+ 
++def _open_local_path(path):
++    # [补丁 P5] webbrowser.open("file://…") 在 Windows 上静默失败；改用 os.startfile / open / xdg-open
++    if svf_webui:
++        svf_webui.open_path(path)
++    else:
++        webbrowser.open(Path(path).as_uri())
++
++
+ def _open_task_path(task_path):
+     tasks_root = os.path.abspath(utils.task_dir())
+     normalized_path = os.path.abspath(task_path)
+@@ -1155,7 +1174,7 @@
+         rel_path = os.path.relpath(normalized_path, os.path.dirname(tasks_root))
+         st.toast(f"{tr('Open Task Folder')}: ./storage/{rel_path}", icon="📂")
+         return
+-    webbrowser.open(f"file://{normalized_path}")
++    _open_local_path(normalized_path)  # [补丁 P5]
+ 
+ 
+ def _open_task_video(video_file):
+@@ -1901,7 +1920,7 @@
          # 通过路径拼接访问任务目录之外的位置，也避免后续打开目录时触发
          # 平台 shell 对特殊字符的解释。
          normalized_task_id = str(UUID(str(task_id)))
@@ -86,6 +199,109 @@
          path = os.path.abspath(os.path.join(tasks_root, normalized_task_id))
  
          # 即使 UUID 校验通过，也再次确认最终路径仍在任务根目录内，避免
+@@ -1911,7 +1930,7 @@
+             return
+ 
+         if os.path.isdir(path):
+-            webbrowser.open(f"file://{path}")
++            _open_local_path(path)  # [补丁 P5]
+     except Exception as e:
+         logger.exception(f"failed to open task folder: task_id={task_id}, error={e}")
+ 
+@@ -2813,7 +2832,7 @@
+             use_container_width=True,
+             icon=":material/folder_open:",
+         ):
+-            webbrowser.open(Path(cache_manager.video_cache_dir()).as_uri())
++            _open_local_path(cache_manager.video_cache_dir())  # [补丁 P5]
+ 
+         cleanup_disabled = not confirmed or cleanup_preview.file_count == 0
+         if cleanup_col.button(
+@@ -3653,6 +3672,8 @@
+                     key="pexels_api_keys_input",
+                 )
+                 _save_material_api_keys("pexels_api_keys", pexels_api_key)
++                if svf_webui:  # [补丁 P5] 钥匙格式检查
++                    svf_webui.render_key_hint(st, "pexels", pexels_api_key)
+ 
+                 pixabay_api_key = st.text_input(
+                     tr("Pixabay API Key"),
+@@ -3661,6 +3682,8 @@
+                     key="pixabay_api_keys_input",
+                 )
+                 _save_material_api_keys("pixabay_api_keys", pixabay_api_key)
++                if svf_webui:  # [补丁 P5] 钥匙格式检查
++                    svf_webui.render_key_hint(st, "pixabay", pixabay_api_key)
+ 
+                 coverr_api_key = st.text_input(
+                     tr("Coverr API Key"),
+@@ -3669,6 +3692,8 @@
+                     key="coverr_api_keys_input",
+                 )
+                 _save_material_api_keys("coverr_api_keys", coverr_api_key)
++                if svf_webui:  # [补丁 P5] 素材下载代理（写入 config.proxy，只有素材搜索和下载使用）
++                    svf_webui.render_material_proxy(st, config)
+ 
+             with st.container(border=True):
+                 st.markdown(f"#### {tr('AI Video Generation APIs')}")
+@@ -5202,6 +5227,8 @@
+                 "openai_image": tr("OpenAI Compatible Text-to-Image"),
+                 "local": tr("Local file"),
+             }
++            if svf_webui:  # [补丁 P5]
++                video_source_labels.update(svf_webui.CARD_SOURCE_LABELS)
+             saved_video_source_name = str(
+                 config.app.get("video_source", "pexels") or "pexels"
+             )
+@@ -5209,6 +5236,7 @@
+                 tr("Video Source"),
+                 groups=(
+                     (tr("Stock Video"), VIDEO_SOURCE_GROUPS["stock_video"]),
++                    *(((svf_webui.CARD_GROUP_LABEL, VIDEO_SOURCE_GROUPS["program"]),) if svf_webui else ()),  # [补丁 P5]
+                     (tr("AI Video"), VIDEO_SOURCE_GROUPS["ai_video"]),
+                     (tr("AI Image"), VIDEO_SOURCE_GROUPS["ai_image"]),
+                     (tr("Local Material"), VIDEO_SOURCE_GROUPS["local"]),
+@@ -5252,6 +5280,8 @@
+                     accept_multiple_files=True,
+                     key="local_video_materials_uploader",
+                 )
++            if svf_webui:  # [补丁 P5] 程序生成来源的说明和卡片配色
++                svf_webui.render_source_options(st, config, params)
+ 
+             # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
+             # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
+@@ -6283,7 +6313,7 @@
+                         )
+                         st.rerun()
+                 else:
+-                    st.error(tr("Voice Preview No Audio"))
++                    st.error(tr("Voice Preview No Audio") + (svf_webui.tts_failure_hint() if svf_webui else ""))  # [补丁 P5]
+ 
+     cached_preview = st.session_state.get("voice_preview_audio")
+     valid_fingerprints = {sample_fingerprint, full_fingerprint}
+@@ -7133,6 +7163,8 @@
+                         )
+ 
+                 params.voice_name = voice_name
++                if svf_webui:  # [补丁 P5] 声音和文案语言不一致时提醒
++                    svf_webui.render_voice_language_warning(st, params, selected_tts_server)
+                 if not voice.is_no_voice(voice_name):
+                     # 占位 sentinel 仅用于非自动模式的禁用展示，不覆盖用户上一次
+                     # 真正选择的音色，切回自动配音后可以恢复原设置。
+@@ -8038,10 +8070,13 @@
+             "loomloom",
+             "openai_image",
+             "local",
++            *(svf_webui.CARD_SOURCES if svf_webui else ()),  # [补丁 P5]
+         ]:
+             _remove_active_generation_task(task_id)
+             st.error(tr("Please Select a Valid Video Source"))
+             st.stop()
++        if svf_webui:  # [补丁 P5] 生成前再提醒一次声音和文案语言不一致（只提醒，不拦）
++            svf_webui.render_voice_language_warning(st, params, config.ui.get("tts_server", "azure-tts-v1"))
+ 
+         if params.video_source == "pexels" and not config.app.get(
+             "pexels_api_keys", ""
 --- a/webui/i18n/zh.json
 +++ b/webui/i18n/zh.json
 @@ -248,8 +248,8 @@
