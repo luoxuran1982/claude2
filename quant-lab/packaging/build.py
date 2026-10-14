@@ -66,9 +66,18 @@ def pyinstaller(icon_dir: Path) -> Path:
         "--collect-submodules", "sklearn",
         "--collect-submodules", "pyarrow",
         "--hidden-import", "openpyxl",
+        "--collect-all", "akshare",       # 在线数据源：akshare 自带数据文件（交易日历等）
+        "--collect-all", "futu",          # 富途 OpenD 接口（含 protobuf 定义）
+        "--collect-all", "curl_cffi",     # akshare 的依赖，带原生库
+        "--hidden-import", "xlrd",        # 中证指数成分表是 .xls
+        "--hidden-import", "html5lib",
         "--exclude-module", "tkinter",
         "--exclude-module", "matplotlib",
         "--exclude-module", "IPython",
+        "--exclude-module", "torch",           # 以下几个不是本应用的依赖：开发机上装了也不打进包
+        "--exclude-module", "catboost",
+        "--exclude-module", "xgboost",
+        "--exclude-module", "plotly",
     ]
     PyInstaller.__main__.run(args)
     return DIST / NAME

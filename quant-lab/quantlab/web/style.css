@@ -154,3 +154,9 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
 details ul { max-height: 260px; overflow: auto; font-size: 12px; color: #475467; }
 .spark { width: 120px; height: 28px; }
 @media (max-width: 1200px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* 1.2.0 在线下载 */
+#online-card .tabs { margin-bottom: 8px; }
+.quota { font-size: 13px; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--radius); align-self: center; }
+.quota.bad { color: var(--warn); border-color: var(--warn); }
+.list .item small.src { color: var(--muted); opacity: .85; }

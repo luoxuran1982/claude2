@@ -75,6 +75,9 @@ async function refreshStatus() {
     sel.value = list.find((d) => d.id === cur) ? cur : S.ds;
   });
   $('#imp-merge').innerHTML = '<option value="">不合并，新建数据集</option>' + list.filter((d) => !d.demo).map((d) => `<option value="${esc(d.id)}">${esc(d.title)}</option>`).join('');
+  const olKeep = $('#ol-target').value;
+  $('#ol-target').innerHTML = '<option value="">新建数据集</option>' + list.filter((d) => !d.demo).map((d) => `<option value="${esc(d.id)}">更新：${esc(d.title)}</option>`).join('');
+  if (list.find((d) => d.id === olKeep)) $('#ol-target').value = olKeep;
   if (S.status.job && S.status.job.status === 'running') startPolling();
 }
 function setDs(id) {
@@ -109,10 +112,10 @@ async function pollJob() {
 async function onJobFinished(job) {
   if (job.status === 'error') return toast(job.title + ' 失败：' + job.error, true, 9000);
   if (job.status === 'cancelled') return toast('已取消');
-  if (job.kind === 'import' || job.kind === 'demo') {
+  if (job.kind === 'import' || job.kind === 'demo' || job.kind === 'download') {
     setDs(job.result.dataset);
     await refreshStatus();
-    toast('数据已就绪');
+    toast(job.kind === 'download' ? '下载完成：' + job.result.message : '数据已就绪', false, job.kind === 'download' ? 9000 : 4000);
     if ($('#page-data').classList.contains('on')) loadDataPage();
   } else if (job.kind === 'run') {
     toast('实验完成');
@@ -134,12 +137,13 @@ async function startJob(path, body) {
 /* ------------------------------------------------------------------ 数据中心 */
 async function loadDataPage() {
   await refreshStatus();
+  fillOnline().catch((e) => toast(e.message, true));
   const list = S.status.datasets;
   $('#ds-empty').hidden = list.length > 0;
   $('#ds-table tbody').innerHTML = list.map((d) => `<tr>
     <td><b>${esc(d.title)}</b> ${d.demo ? '<span class="chip warn">模拟</span>' : ''} ${d.id === S.ds ? '<span class="chip">当前</span>' : ''}</td>
-    <td class="muted">${esc(d.id)}</td><td class="num">${d.n_symbols}</td><td>${esc(d.start)} ~ ${esc(d.end)}</td>
-    <td class="num">${num(d.n_rows, 0)}</td><td class="num">${d.adjust_events ?? 0}</td><td class="num">${d.issues_count ?? 0}</td>
+    <td class="muted">${esc(d.id)}</td><td>${dsSources(d)}</td><td class="num">${d.n_symbols}</td><td>${esc(d.start)} ~ ${esc(d.end)}</td>
+    <td class="num">${num(d.n_rows, 0)}</td><td class="muted">${esc(d.updated || d.created || '')}</td><td class="num">${d.adjust_events ?? 0}</td><td class="num">${d.issues_count ?? 0}</td>
     <td><button class="sm" data-view="${esc(d.id)}">查看 / 设为当前</button> <button class="sm danger" data-del="${esc(d.id)}">删除</button></td></tr>`).join('');
   $$('#ds-table [data-view]').forEach((b) => (b.onclick = () => { setDs(b.dataset.view); loadDataPage(); }));
   $$('#ds-table [data-del]').forEach((b) => (b.onclick = async () => {
@@ -147,6 +151,16 @@ async function loadDataPage() {
     try { await api('/api/dataset/delete', { id: b.dataset.del }); loadDataPage(); } catch (e) { toast(e.message, true); }
   }));
   if (S.ds) showDataset(S.ds); else $('#ds-detail').hidden = true;
+}
+
+function fallbackSource(d) {
+  if (d.demo) return '演示数据';
+  const src = String(d.source || '').toLowerCase();
+  return src.endsWith('.day') || src.includes('vipdoc') ? '通达信' : (src ? '本地文件' : '未知');
+}
+function dsSources(d) {
+  const src = d.sources && Object.keys(d.sources).length ? d.sources : { [fallbackSource(d)]: d.n_symbols };
+  return Object.entries(src).map(([k, v]) => `<span class="chip ${k === '演示数据' ? 'warn' : 'gray'}">${esc(k)} ${v}</span>`).join(' ');
 }
 
 async function showDataset(id) {
@@ -176,7 +190,9 @@ async function searchSymbols() {
   const r = await api(`/api/symbols?id=${encodeURIComponent(S.ds)}&q=${encodeURIComponent($('#sym-q').value)}`);
   const kindName = { index: '指数', fund: '基金', bond: '债券', stock: '' };
   $('#sym-list').innerHTML = r.symbols.map((s) => `<div class="item" data-sym="${esc(s.symbol)}"><b>${esc(s.symbol)}</b> ${esc(s.name || '')} <span class="muted">${kindName[s.kind] || ''}</span>
-    <small>${esc(s.start)} ~ ${esc(s.end)} · ${s.rows} 行${s.events && s.events.length ? ' · 除权 ' + s.events.length : ''}</small></div>`).join('') || '<div class="empty">没有匹配</div>';
+    <small>${esc(s.start)} ~ ${esc(s.end)} · ${s.rows} 行${s.events && s.events.length ? ' · 除权 ' + s.events.length : ''}</small>
+    <small class="src">来源 ${esc(s.source)} · 更新 ${esc(s.updated)}${s.checked && s.checked > s.updated ? ' · 检查 ' + esc(s.checked) : ''}</small></div>`).join('') || '<div class="empty">没有匹配</div>';
+  S.symInfo = Object.fromEntries(r.symbols.map((x) => [x.symbol, x]));
   $$('#sym-list .item').forEach((el) => (el.onclick = () => loadKline(el.dataset.sym)));
   if (!S.kSym && r.symbols[0]) loadKline(r.symbols[0].symbol);
 }
@@ -199,7 +215,7 @@ async function loadKline(sym) {
   const chg = last[1] / prev[1] - 1;
   const nm = ($(`#sym-list .item[data-sym="${sym}"]`) || {}).textContent || '';
   $('#kl-head').innerHTML = `<b>${esc(sym)}</b><span>${esc(nm.split('\n')[0].replace(sym, '').trim())}</span>
-    <span>收 ${num(last[1])}</span><span class="${sgn(chg)}">${pct(chg, 2)}</span><span class="muted">${esc(d.dates[d.dates.length - 1])} · 前复权${d.events.length ? ' · 除权 ' + d.events.length + ' 次' : ''}</span>`;
+    <span>收 ${num(last[1])}</span><span class="${sgn(chg)}">${pct(chg, 2)}</span><span class="muted">${esc(d.dates[d.dates.length - 1])} · 前复权${d.events.length ? ' · 除权 ' + d.events.length + ' 次' : ''}</span>${(S.symInfo || {})[sym] ? `<span class="muted">来源 ${esc(S.symInfo[sym].source)} · 更新于 ${esc(S.symInfo[sym].updated)}</span>` : ''}`;
   const hasScore = d.scores && d.scores.dates.length;
   const c = chart('kline', $('#kline'));
   const grids = hasScore ? [{ left: 60, right: 30, top: 30, height: '52%' }, { left: 60, right: 30, top: '64%', height: '14%' }, { left: 60, right: 30, top: '82%', height: '11%' }]
@@ -255,6 +271,71 @@ $('#demo-go').onclick = async () => {
   try { await startJob('/api/demo', { n_stocks: +$('#demo-n').value, years: +$('#demo-years').value }); } catch (e) { toast(e.message, true); }
 };
 $('#open-data-dir').onclick = () => api('/api/open-dir', { which: 'data' }).catch((e) => toast(e.message, true));
+
+/* ------------------------------------------------------------------ 在线下载（AKShare / 富途 OpenD） */
+const OL = { src: 'akshare', filled: false };
+function olShow(src) {
+  OL.src = src;
+  $$('#ol-tabs a').forEach((a) => a.classList.toggle('on', a.dataset.src === src));
+  $$('#online-card [data-for]').forEach((el) => (el.hidden = el.dataset.for !== src));
+  const all = $('#ol-scope option[value="all"]');
+  all.disabled = src === 'futu';
+  if (src === 'futu' && $('#ol-scope').value === 'all') $('#ol-scope').value = 'index';
+  $('#ol-interval').value = src === 'futu' ? 0.6 : 0.5;
+  $('#ol-title').placeholder = src === 'futu' ? '例如 富途 自选股' : '例如 AKShare 沪深300';
+  try { localStorage.setItem('ql.olsrc', src); } catch (e) { /* */ }
+  olScope();
+}
+function olScope() {
+  const v = $('#ol-scope').value;
+  $('#ol-index-wrap').hidden = v !== 'index';
+  $('#ol-codes-wrap').hidden = v !== 'custom';
+  olEstimate();
+}
+function olEstimate() {
+  const v = $('#ol-scope').value;
+  const n = v === 'all' ? 5300 : v === 'index' ? ({ '000300': 300, '000905': 500, '000852': 1000, '000016': 50, '000688': 50, '399006': 100, '000510': 500 }[$('#ol-index').value] || 300)
+    : v === 'custom' ? ($('#ol-codes').value.match(/\d{6}/g) || []).length : null;
+  const per = ($('#ol-adjust').value === 'factor' ? 2 : 1) * Math.max(+$('#ol-interval').value || 0, 0.3);
+  $('#ol-estimate').textContent = n == null ? '只补本地缺少的日期，已是最新的不请求' : `约 ${n} 只，首次下载预计 ${Math.max(1, Math.round((n * per) / 60))} 分钟（已有的只补新日期，会快很多）`;
+}
+async function fillOnline() {
+  if (OL.filled) return;
+  if (!S.catalog) S.catalog = await api('/api/catalog');
+  const o = S.catalog.online;
+  $('#ol-adjust').innerHTML = Object.entries(o.adjust).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+  $('#ol-index').innerHTML = Object.entries(o.indexes).map(([k, v]) => `<option value="${k}">${esc(v)}（${k}）</option>`).join('');
+  $('#ol-end').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  OL.filled = true;
+  let src = 'akshare';
+  try { src = localStorage.getItem('ql.olsrc') || 'akshare'; } catch (e) { /* */ }
+  olShow(src);
+}
+$$('#ol-tabs a').forEach((a) => (a.onclick = () => olShow(a.dataset.src)));
+$('#ol-scope').onchange = olScope;
+['#ol-index', '#ol-adjust', '#ol-interval', '#ol-codes'].forEach((id) => ($(id).oninput = olEstimate));
+$('#ol-index').onchange = olEstimate;
+$('#ol-adjust').onchange = olEstimate;
+$('#ol-quota').onclick = async () => {
+  const box = $('#ol-quota-box');
+  box.className = 'quota muted';
+  box.textContent = '正在连接 OpenD…';
+  try {
+    const q = await api('/api/futu/quota', { host: $('#ol-host').value, port: +$('#ol-port').value });
+    box.className = 'quota';
+    box.innerHTML = `历史 K 线额度：剩余 <b>${q.remain}</b> · 已用 ${q.used}（最近 30 天下载过 ${q.recent.length} 只，重复下载不占额度）`;
+  } catch (e) {
+    box.className = 'quota bad';
+    box.textContent = e.message;
+  }
+};
+$('#ol-go').onclick = async () => {
+  const body = { source: OL.src, scope: $('#ol-scope').value, index: $('#ol-index').value, codes: $('#ol-codes').value,
+    start: $('#ol-start').value, end: $('#ol-end').value, adjust: $('#ol-adjust').value, interval: +$('#ol-interval').value,
+    target: $('#ol-target').value, title: $('#ol-title').value, host: $('#ol-host').value, port: +$('#ol-port').value,
+    benchmarks: $('#ol-bench').checked ? ['sh000300', 'sh000905'] : [] };
+  try { await startJob('/api/online/start', body); } catch (e) { toast(e.message, true, 9000); }
+};
 
 /* ------------------------------------------------------------------ 因子研究 */
 async function loadFactorsPage() { await refreshStatus(); }
@@ -460,6 +541,7 @@ async function openRun(id) {
       <div class="muted">回测区间 ${esc(p.start)} ~ ${esc(p.end)}（${p.days} 个交易日）</div></div>
       <div class="btns"><button class="sm" data-act="rename">重命名</button><button class="sm" data-act="rerun">用此配置新建</button>
       <button class="sm" data-exp="trades">导出交易</button><button class="sm" data-exp="nav">导出净值</button><button class="sm" data-exp="predictions">导出预测</button>
+      <button class="sm" data-exp="result" title="完整实验结果（配置、区间、股票池、日收益、IC 序列、指标），给 Qlib 量化研究台对比用">导出实验结果 JSON</button>
       <button class="sm" data-act="dir">打开文件夹</button><button class="sm danger" data-act="del">删除</button></div></div>
     <div class="kpi-grid">${kpis}</div>
     <div class="tabs">${['概览', '模型评估', '交易记录', '月度收益', '当前持仓', '训练过程', '配置'].map((x, i) => `<a data-tab="${i}" class="${i ? '' : 'on'}">${x}</a>`).join('')}</div>
@@ -729,7 +811,9 @@ async function loadStatusPage() {
   $('#ps-job').textContent = r.job ? `当前/最近任务：${r.job.title}（${st[r.job.status] || r.job.status}）——任务在主进程的线程里运行，不会多出 PID；若任务启动了子进程，会出现在上表里。` : '当前没有计算任务。';
   $('#ps-notes').innerHTML = `口径：macOS 为常驻内存 RSS，Windows 为工作集（Working Set），1 MiB = 1024² 字节。Windows「任务管理器」默认显示的是“专用工作集”，通常比这里小。
     同一进程里的线程共享 PID，线程数不是进程数。macOS 的网页内容进程（WebKit WebContent）由系统托管、不是本应用的子进程，这里列不出来（未实现）。`;
-  $('#ps-external').textContent = r.external && r.external.length ? r.external.map((x) => x.name).join('、') : '无（本应用不依赖外部常驻服务；不计入本应用合计）';
+  $('#ps-external').textContent = r.external && r.external.length
+    ? r.external.map((x) => `${x.name}${x.pid ? '（PID ' + x.pid + '，' + mib(x.mem_mib) + ' MiB）' : ''}：${x.note || ''}`).join('；') + '。不计入本应用合计。'
+    : '无（本次没有用到外部常驻服务；用过富途 OpenD 后会在这里单独列出它，不计入本应用合计）';
   $('#tb-mem').textContent = r.total_mib != null ? `运行状态 ${r.total_mib.toFixed(0)} MiB` : '运行状态';
 }
 setInterval(() => { if (S.page === 'status') loadStatusPage(); }, 3000);

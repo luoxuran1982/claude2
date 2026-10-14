@@ -5,6 +5,7 @@
     python run.py list
     python run.py run my_config.json          # 配置格式见 docs/使用说明.md
     python run.py factors --dataset demo
+    python run.py export <实验编号> result.json   # 导出实验结果 JSON（格式见 docs/03 实验结果导出格式.md）
 """
 from __future__ import annotations
 
@@ -53,6 +54,9 @@ def main(argv=None) -> None:
     f = sub.add_parser("factors", help="单因子检验")
     f.add_argument("--dataset", required=True)
     f.add_argument("--horizon", type=int, default=5)
+    x = sub.add_parser("export", help="导出实验结果 JSON（给 Qlib 量化研究台等对比用）")
+    x.add_argument("run_id")
+    x.add_argument("out")
     args = ap.parse_args(argv)
 
     root = data_dir() if not args.data else __import__("pathlib").Path(args.data)
@@ -82,6 +86,12 @@ def main(argv=None) -> None:
         print(f"实验 {rid} 完成")
         print(json.dumps({"perf": s["perf"], "ic": s["ic"], "trade_stats": s["trade_stats"]}, ensure_ascii=False, indent=1))
         print("结果目录：", runs.path(rid))
+    elif args.cmd == "export":
+        from . import export
+        doc = export.build(runs, store, args.run_id)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, ensure_ascii=False, indent=1, allow_nan=False)
+        print(f"已导出 {args.out}（格式 {doc['format']} {doc['format_version']}，{len(doc['daily_returns']['dates'])} 个交易日）")
     elif args.cmd == "factors":
         res = experiment.factor_study(store, {"dataset": args.dataset, "label": {"horizon": args.horizon}}, _progress())
         print(f"{'因子':18s} {'RankIC':>8s} {'ICIR':>7s} {'胜率':>6s}  说明")

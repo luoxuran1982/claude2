@@ -115,7 +115,7 @@ def shutdown(app, httpd, wait: float = 5.0) -> None:
 
 
 def selftest(out: str) -> None:
-    """打包后验证 LightGBM / sklearn / pyarrow 等依赖都能用：演示数据 → 三模型集成实验。"""
+    """打包后验证 LightGBM / sklearn / pyarrow / akshare / futu-api 等依赖都能用：演示数据 → 三模型集成实验 → 导出 JSON。"""
     import json
     import tempfile
     import traceback
@@ -132,8 +132,17 @@ def selftest(out: str) -> None:
         rid = experiment.run(store, runs, {"dataset": "selftest", "model": {"types": ["lgbm", "ridge", "mlp"]},
                                            "walk": {"retrain_days": 126}})
         s = runs.summary(rid)
+        from . import export
+        doc = export.build(runs, store, rid)
+        problems = export.validate(doc)
+        if problems:
+            raise RuntimeError("导出格式检查失败：" + "；".join(problems))
+        import akshare  # noqa: PLC0415  在线数据源依赖确实打进了安装包
+        import futu  # noqa: PLC0415
         result.update(ok=True, run=rid, cagr=s["perf"].get("cagr"), rank_ic=s["ic"]["rank_ic"].get("mean"),
-                      trades=s["trade_stats"].get("n_trades"), picks=len(runs.picks(rid)["picks"]))
+                      trades=s["trade_stats"].get("n_trades"), picks=len(runs.picks(rid)["picks"]),
+                      export_days=len(doc["daily_returns"]["dates"]),
+                      akshare=getattr(akshare, "__version__", "?"), futu=getattr(futu, "__version__", "?"))
     except Exception as exc:  # noqa: BLE001
         result["error"] = f"{exc}\n{traceback.format_exc()}"
     Path(out).write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -142,7 +151,7 @@ def selftest(out: str) -> None:
 
 def main(argv=None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    if argv and argv[0] in ("cli", "demo", "import", "run", "factors", "list"):
+    if argv and argv[0] in ("cli", "demo", "import", "run", "factors", "list", "export"):
         from .cli import main as cli_main
         return cli_main(argv[1:] if argv[0] == "cli" else argv)
     ap = argparse.ArgumentParser(description=APP_NAME)

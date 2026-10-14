@@ -125,6 +125,25 @@ def processes(main_role: str = "主进程", mode: str = "") -> dict:
     }
 
 
+def external_opend() -> list[dict]:
+    """富途/moomoo OpenD：应用外部的独立服务（用户自己打开，不随本应用退出），单独列出、不计入本应用合计。"""
+    if not psutil:
+        return []
+    out = []
+    try:
+        for p in psutil.process_iter(["name", "pid"]):
+            name = (p.info.get("name") or "")
+            if "opend" in name.lower().replace(" ", "").replace("_", ""):
+                try:
+                    out.append({"name": name, "pid": p.pid, "mem_mib": _mib(_rss(p)),
+                                "note": "富途/moomoo OpenD（外部独立服务，本应用只连接它，退出时不会关闭它）"})
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    out.append({"name": name, "pid": p.pid, "mem_mib": None, "note": "富途/moomoo OpenD（外部独立服务）"})
+    except Exception:  # noqa: BLE001
+        return out
+    return out
+
+
 def stop_children(timeout: float = 3.0) -> int:
     """退出时结束本进程启动的全部子进程（先 terminate，超时再 kill）。返回处理的数量。"""
     if not psutil:

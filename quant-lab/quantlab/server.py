@@ -70,12 +70,16 @@ class App:
         self.quit_event = threading.Event()
         self._static = resource_dir() / "web"
         self.sources = guide.Sources()
+        self.futu_used = False        # 本次启动是否连接过富途 OpenD（运行状态页据此列出外部依赖）
         self.mode = "服务模式"        # 启动后由 app.py 改成「窗口模式」或「浏览器模式」
 
     def process_status(self) -> dict:
         role = {"窗口模式": "主进程（窗口 + 本机服务 + 计算任务）",
                 "浏览器模式": "主进程（本机服务 + 计算任务；页面在你的浏览器里）"}.get(self.mode, "主进程（本机服务 + 计算任务）")
         info = sysinfo.processes(role, self.mode)
+        if self.futu_used:   # 用过富途数据源后，单独列出外部的 OpenD 进程（不计入本应用合计）
+            info["external"] = sysinfo.external_opend() or [{"name": "OpenD", "pid": None, "mem_mib": None,
+                                                              "note": "富途/moomoo OpenD：本机没找到它的进程（可能没运行，或在别的电脑上）"}]
         job = self.jobs.snapshot()
         info["job"] = {"title": job["title"], "status": job["status"]} if job else None
         return info
@@ -227,6 +231,8 @@ class App:
         scope = body.get("scope") or "custom"
         if scope == "dataset" and not target:
             raise ValueError("「沿用数据集里的股票」需要先在「写入到」里选一个已有数据集")
+        if scope == "custom" and not online.parse_codes(body.get("codes") or "")[0]:
+            raise ValueError("请填写股票代码，例如 600519, 000001, 300750")
         if source == "futu" and scope == "all":
             raise ValueError("富途历史 K 线有额度限制，不支持「全部 A 股」：请用指数成分或自选代码，或改用 AKShare")
         interval = min(max(float(body.get("interval") or (0.5 if source == "akshare" else 0.6)), 0.0), 10.0)
@@ -235,6 +241,7 @@ class App:
         ds_symbols = [m["symbol"] for m in self.store.meta(target).get("symbols", [])] if target else []
         if source == "futu":
             futu_source.FutuFetcher(body.get("host"), body.get("port"))   # 先校验地址端口
+            self.futu_used = True
         label = "AKShare" if source == "akshare" else "富途 OpenD"
 
         def work(progress):
@@ -263,6 +270,7 @@ class App:
     def futu_quota(self, body: dict) -> dict:
         from .data import futu_source
         f = futu_source.FutuFetcher(body.get("host"), body.get("port"), open_timeout=10)
+        self.futu_used = True
         try:
             q = f.quota()
         finally:
