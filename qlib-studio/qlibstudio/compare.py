@@ -76,8 +76,13 @@ def export_from_result(res: dict) -> dict:
                      "top_k": st.get("topk"), "rebalance": f"每日 TopkDropout（每天最多换 {st.get('n_drop')} 只）",
                      "deal_price": {"close": "当日收盘价", "open": "当日开盘价"}.get(cfg.get("deal_price"), cfg.get("deal_price")),
                      "costs": f"买 {costs.get('open_cost')}、卖 {costs.get('close_cost')}（含印花税）、最低 {costs.get('min_cost')} 元",
-                     "limit": cfg.get("limit"), "benchmark": res.get("benchmark"), "pool": cfg.get("pool"),
-                     "rolling": cfg.get("rolling")},
+                     "limit": {"board": "按板块涨跌停（主板 10%、ST 5%、创业板/科创板 20%、北交所 30%）",
+                               "qlib": "上游默认 ±9.5%", "none": "不限制"}.get(cfg.get("limit"), cfg.get("limit")),
+                     "benchmark": res.get("benchmark"), "pool": cfg.get("pool"),
+                     "n_features": {"Alpha158": 158, "Alpha360": 360}.get(cfg.get("factors")),
+                     "rolling": (f"每 {(cfg.get('rolling') or {}).get('step_days')} 个交易日重训，"
+                                 + ("训练窗口扩展" if (cfg.get("rolling") or {}).get("expanding", True) else "训练窗口固定长度滑动"))
+                                if (cfg.get("rolling") or {}).get("enabled") else "不滚动（一次切分）"},
         "metrics": {"total_return": m.get("total_return"), "annual_return": m.get("annual_return"),
                     "volatility": m.get("volatility"), "sharpe": m.get("sharpe"), "max_drawdown": m.get("max_drawdown"),
                     "excess_annual_return": m.get("excess_annual_return"), "info_ratio": ir,

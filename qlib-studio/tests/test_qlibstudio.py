@@ -363,6 +363,30 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(len(a["curve"]["dates"]), len(b["curve"]["dates"]))
         self.assertAlmostEqual(a["metrics_common"]["total_return"], b["metrics_common"]["total_return"], places=9)
 
+    def test_quantlab_run_dir(self):
+        """QuantLab 1.1 的实验目录（summary.json + nav.csv + config.json）→ 交换格式。"""
+        d = Path(tempfile.mkdtemp(prefix="ql-run-"))
+        try:
+            dates = pd.bdate_range("2024-01-02", periods=60)
+            nav = pd.DataFrame({"equity": 1e6, "cash": 0.0, "n_pos": 20, "nav": np.linspace(1, 1.1, 60),
+                                "bench": np.linspace(1, 1.05, 60)}, index=dates)
+            nav.to_csv(d / "nav.csv")
+            (d / "summary.json").write_text(json.dumps({
+                "id": "r1", "name": "QL", "version": "1.1.0", "dataset_title": "演示", "n_features": 73, "models": ["lgbm"],
+                "horizon": 5, "top_k": 20, "perf": {"cagr": 0.4, "start": "2024-01-02", "end": str(dates[-1].date())},
+                "ic": {"ic": {"mean": 0.03, "ir": 0.3}, "rank_ic": {"mean": 0.04, "ir": 0.4}}, "trade_stats": {"turnover_annual": 24.4},
+                "ic_series": {"dates": ["2024-01-02"], "ic": [0.1], "rank_ic": [0.2]}}), encoding="utf-8")
+            (d / "config.json").write_text(json.dumps({"backtest": {"rebalance_days": 5, "buffer": 1.5}}), encoding="utf-8")
+            x = compare.from_quantlab_run_dir(d)
+            self.assertEqual(x["app"], "QuantLab")
+            self.assertEqual(len(x["daily"]["return"]), 60)
+            self.assertAlmostEqual(x["metrics"]["turnover"], 0.1)
+            self.assertAlmostEqual(x["metrics"]["rank_ic_mean"], 0.04)
+            with self.assertRaises(compare.FormatError):
+                compare.from_quantlab_run_dir(d / "没有")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_bad_files(self):
         for obj, word in (({"perf": {}, "ic": {}}, "导出实验结果"), ({"format": "quant-experiment-result", "format_version": 9}, "升级"),
                           ({"format": "quant-experiment-result", "format_version": 1, "daily": {"dates": ["2024-01-02"], "return": []}}, "长度")):
