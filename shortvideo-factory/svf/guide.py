@@ -18,7 +18,7 @@ from .paths import guide_root
 SHELL_GLOBS = (
     "run.py", "requirements.txt", "requirements-runtime.txt", "start-mac.command", "start-windows.bat",
     "upstream-patches.diff",
-    "svf/*.py", "svf/web/*.html", "svf/web/*.js", "svf/web/*.css", "svf/web/*.svg",
+    "svf/*.py", "svf/web/*.html", "svf/web/*.js", "svf/web/*.css", "svf/web/*.svg", "svf_ext/*.py",
     "packaging/*.py", "packaging/*.nsi", "tests/*.py", "tests/*.js",
 )
 UPSTREAM_GLOBS = (

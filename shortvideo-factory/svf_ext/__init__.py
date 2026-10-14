@@ -1,7 +1,7 @@
 """AI 短视频工厂的「外壳扩展」：运行在生成界面后台（上游 Streamlit 进程）里的代码。
 
 和 svf/（启动器、窗口、本机服务）不同，这个包由随包 Python 加载，和上游 MoneyPrinterTurbo 在同一个进程里，
-所以能用上游的依赖（Pillow、MoviePy、requests、loguru）。上游源码只在少数几处用「[补丁 P5]–[补丁 P7]」
+所以能用上游的依赖（Pillow、MoviePy、requests、loguru）。上游源码只在少数几处用「[补丁 P5]」「[补丁 P6]」
 调用这里的函数（见 UPSTREAM.md）；单独运行上游、找不到本包时，那几处退回上游原来的行为。
 
 - storyboard：把文案按配音/字幕时间切成讲解页，按句子特征选版式（纯 Python，不画图）

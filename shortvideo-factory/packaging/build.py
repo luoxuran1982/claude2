@@ -16,7 +16,7 @@
     payload/runtime/   Python 3.11 + 依赖（.pyc 已预编译）
     payload/upstream/  MoneyPrinterTurbo 源码（只含运行需要的部分）
     payload/fonts/     开源字体与许可证
-    payload/child/     svf_child.py（Streamlit 子进程入口）
+    payload/child/     svf_child.py（Streamlit 子进程入口）和 svf_ext/（外壳扩展：知识讲解卡片、中文提示等）
     payload/project/   README、docs/ 和源码（给应用内「使用指南」离线显示）
 """
 from __future__ import annotations
@@ -167,6 +167,8 @@ def build_payload() -> tuple[Path, Path]:
     shutil.copytree(ROOT / "fonts", payload / "fonts")
     (payload / "child").mkdir(exist_ok=True)
     shutil.copy2(ROOT / "svf" / "child.py", payload / "child" / "svf_child.py")
+    shutil.rmtree(payload / "child" / "svf_ext", ignore_errors=True)   # 外壳扩展（知识卡片等），在生成界面后台里运行
+    shutil.copytree(ROOT / "svf_ext", payload / "child" / "svf_ext", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     stage_project(payload)
     # 预编译 .pyc（unchecked-hash：不依赖文件时间，安装目录只读也不用再写缓存）
     subprocess.run([str(py), "-m", "compileall", "-q", "-j", "0", "--invalidation-mode", "unchecked-hash",

@@ -81,6 +81,15 @@ def watchdog(parent_pid: int) -> None:
             kill_own_tree()
 
 
+def ext_root(here: str | None = None) -> str:
+    """svf_ext 包所在的目录：安装包里和本文件同在 payload/child/，源码运行时在 shortvideo-factory/。找不到返回空串。"""
+    here = here or os.path.dirname(os.path.abspath(__file__))
+    for cand in (here, os.path.dirname(here)):
+        if os.path.isfile(os.path.join(cand, "svf_ext", "__init__.py")):
+            return cand
+    return ""
+
+
 def streamlit_argv(script: str, port: int, base_path: str) -> list[str]:
     return [
         "streamlit", "run", script,
@@ -131,7 +140,10 @@ def main(argv=None) -> None:
     if args.extra_path and os.path.isdir(args.extra_path):
         sys.path.append(args.extra_path)
     sys.path.insert(0, upstream)
-    os.environ["PYTHONPATH"] = upstream + os.pathsep + os.environ.get("PYTHONPATH", "")
+    ext = ext_root()
+    if ext:   # 外壳扩展 svf_ext（知识讲解卡片、中文提示等），上游通过 [补丁 P5][补丁 P6] 调用
+        sys.path.insert(1, ext)
+    os.environ["PYTHONPATH"] = upstream + os.pathsep + (ext + os.pathsep if ext else "") + os.environ.get("PYTHONPATH", "")
     os.chdir(upstream)
 
     sys.argv = streamlit_argv(os.path.join(upstream, "webui", "Main.py"), args.port, args.base_path)

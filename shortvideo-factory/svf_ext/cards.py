@@ -183,7 +183,7 @@ class Layout:
         self.m = (64 if self.portrait else 90) * s
         top, bottom = 0.0, float(H)
         if safe == "bottom":
-            bottom = H * (0.76 if self.portrait else 0.80)
+            bottom = H * (0.78 if self.portrait else 0.80)
         elif safe == "top":
             top = H * (0.20 if self.portrait else 0.18)
         head_top = top + (H * 0.07 if self.portrait else 52 * s)

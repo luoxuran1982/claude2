@@ -38,6 +38,13 @@ from app.services import state as sm
 from app.utils import file_security, utils
 from app.utils.subtitle_writer import staged_subtitle_file
 
+# [AI 短视频工厂补丁 P6] 外壳扩展 svf_ext：「程序生成」视频来源（知识讲解卡片、混合）和配音/素材失败的中文原因。
+# 单独运行上游时没有这个包，下面几处都退回上游原来的行为。
+try:
+    from svf_ext import pipeline as svf_pipeline
+except ImportError:
+    svf_pipeline = None
+
 
 # 发布请求最长可等待数分钟，不能继续占用视频生成任务的并发名额。
 # 固定大小的线程池将发布吞吐限制在可控范围内，同时让视频产物生成后
@@ -99,6 +106,8 @@ _SUPPORTED_VIDEO_SOURCES = frozenset({
     "volcengine_seedance", "ofox", "metaso_minimax", "muapi",
     "loomloom", "openai_image",
 })
+if svf_pipeline:  # [补丁 P6] 知识讲解卡片、混合（库存素材 + 卡片补齐）
+    _SUPPORTED_VIDEO_SOURCES = _SUPPORTED_VIDEO_SOURCES | frozenset(svf_pipeline.CARD_SOURCES)
 
 
 def _get_video_music_prompt(params: VideoParams) -> str:
@@ -609,7 +618,8 @@ def generate_audio(
             _mark_task_failed(
                 task_id,
                 "audio",
-                "failed to synthesize audio; verify the selected voice and TTS connectivity",
+                "failed to synthesize audio; verify the selected voice and TTS connectivity"
+                + (svf_pipeline.tts_failure_hint() if svf_pipeline else ""),  # [补丁 P6] 按日志补中文原因
             )
             return None, None, None
         # Measure the real written audio_file, not sub_maker.cues[-1].end:
@@ -795,6 +805,9 @@ def get_video_materials(
                 },
             )
             return None
+    elif svf_pipeline and params.video_source in svf_pipeline.CARD_SOURCES:
+        # [补丁 P6] 程序生成的讲解页（配音和字幕此时已生成，按它们的时间分页）
+        return svf_pipeline.prepare_materials(task_id, params, video_terms, audio_duration)
     else:
         logger.info(f"\n\n## downloading videos from {params.video_source}")
         # 顺序匹配模式只在用户显式开启时生效。这里强制素材下载按关键词顺序
@@ -896,7 +909,8 @@ def get_video_materials(
             _mark_task_failed(
                 task_id,
                 "materials",
-                f"failed to download video materials from {params.video_source}",
+                f"failed to download video materials from {params.video_source}"
+                + (svf_pipeline.material_failure_hint(params.video_source) if svf_pipeline else ""),  # [补丁 P6]
             )
             return None
         return downloaded_videos
@@ -1674,7 +1688,9 @@ def _run_pipeline(
 
     # 2. Generate terms
     video_terms = ""
-    if stop_at in {"terms", "materials", "video"} and params.video_source != "local":
+    if stop_at in {"terms", "materials", "video"} and params.video_source != "local" and (
+        not svf_pipeline or svf_pipeline.needs_terms(params.video_source)  # [补丁 P6] 纯知识卡片不用搜索关键词
+    ):
         video_terms = generate_terms(task_id, params, video_script)
         if not video_terms:
             return _mark_task_failed(

@@ -42,8 +42,9 @@ LIST_LEAD = re.compile(r"(?:包括|包含|分为|分成|分别是|有|是|如|�
 _UNITS = r"%|％|倍|年|个|次|种|秒|分钟|小时|天|元|美元|伏|V|GHz|MHz|nm|纳米|位|bit|字节|KB|MB|GB|TB|岁|米|公里|千米|度|℃"
 NUMBER_UNIT = re.compile(rf"(\d+(?:\.\d+)?\s*(?:(?:万亿|万|亿|千|百)\s*(?:{_UNITS})?|(?:{_UNITS})))")
 TOPIC = re.compile(
-    r"^([^，,。；;：:！？!?\s]{1,8}?)(?:是|指的是|指|叫做|叫|称为|被称为|只有|只要|则|就是|就|会|能够|能|可以|负责|用来|用于|表示|代表|的作用|的意思|：|:)"
+    r"^([^，,。；;：:！？!?\s]{1,8}?)(是|指的是|指|叫做|叫|称为|被称为|只有|只要|则|就是|就|会|能够|能|可以|负责|用来|用于|表示|代表|的作用|的意思|：|:)"
 )
+PARALLEL_VERBS = ("是", "指", "指的是", "负责", "用来", "用于", "表示", "代表", "就是", "：", ":")
 TOPIC_BAD_PREFIX = ("这", "那", "它", "他", "她", "我", "你", "如果", "因为", "所以", "但是", "但", "而", "当", "其实", "比如", "例如",
                     "也就是", "也", "还", "就", "只", "都", "又", "再", "先", "把", "被", "让", "在", "从", "对", "给", "跟", "和", "与其",
                     "今天", "现在", "接下来", "下面", "大家", "简单", "总之", "总的来说", "所谓")
@@ -60,6 +61,8 @@ class Sentence:
     marker: str = ""
     rest: str = ""
     topic: str = ""
+    verb: str = ""               # 主语后面紧跟的词（是 / 负责 / 用来…），用来判断两句是不是并列
+    speech: tuple = (0.0, 0.0)   # 真正在说这句话的时间（开口 → 说完），用于估算句内要点的亮起时间
 
     @property
     def duration(self) -> float:
@@ -205,18 +208,22 @@ def condense(text: str, limit: int = 30) -> str:
     return out if len(out) >= limit * 0.4 else t[: limit - 1].rstrip(PUNCT_STRIP) + "…"
 
 
-def topic_of(text: str) -> str:
-    """句子开头的主语（「与门只有…」→ 与门），没有明显主语时返回空。"""
+def topic_and_verb(text: str) -> tuple[str, str]:
+    """句子开头的主语和紧跟的词（「与门只有…」→ 与门、只有），没有明显主语时返回空。"""
     t = ORDINAL.sub("", (text or "").strip(), count=1).strip()
     m = TOPIC.match(t)
     if not m:
-        return ""
+        return "", ""
     topic = m.group(1).strip(PUNCT_STRIP)
     if not topic or topic.startswith(TOPIC_BAD_PREFIX) or not norm_chars(topic):
-        return ""
+        return "", ""
     if len(topic) == 1 and not is_cjk(topic):
-        return ""
-    return topic
+        return "", ""
+    return topic, m.group(2)
+
+
+def topic_of(text: str) -> str:
+    return topic_and_verb(text)[0]
 
 
 def analyze(text: str) -> Sentence:
@@ -224,8 +231,15 @@ def analyze(text: str) -> Sentence:
     m = ORDINAL.match(text.strip())
     if m and len(text.strip()) > len(m.group(0)) + 1:
         s.kind, s.marker, s.rest = "ordinal", m.group(0).strip(), text.strip()[m.end():].strip()
-    s.topic = topic_of(text)
+    s.topic, s.verb = topic_and_verb(text)
     return s
+
+
+def _parallel(a: Sentence, b: Sentence) -> bool:
+    """两句是不是并列：主语都短、互不相同，且主语有相同的尾字（与门/或门）或后面跟着同样的「是/负责/用来…」。"""
+    if not (a.topic and b.topic and len(a.topic) <= 6 and len(b.topic) <= 6 and a.topic != b.topic):
+        return False
+    return bool(_common_suffix([a.topic, b.topic])) or (a.verb == b.verb and a.verb in PARALLEL_VERBS)
 
 
 # ---------------------------------------------------------------- 关键词
@@ -411,14 +425,14 @@ def _flow_nodes(text: str) -> list[str] | None:
     if ARROW.search(t):
         nodes = [n.strip(PUNCT_STRIP) for n in ARROW.split(t) if n.strip(PUNCT_STRIP)]
         if 2 <= len(nodes) <= MAX_ITEMS + 1:
-            return [short(n, 10) for n in nodes[:MAX_ITEMS]]
+            return [short(n, 14) for n in nodes[:MAX_ITEMS]]
     if len(SEQ_MARK.findall(t)) >= 2:
         parts = [p for p in re.split(r"[，,；;。]", t) if norm_chars(p)]
         nodes = []
         for p in parts:
             p2 = re.sub(r"^\s*(?:首先|先|然后|接着|再|之后|随后|最后|最终|进而)", "", p).strip(PUNCT_STRIP)
             if p2:
-                nodes.append(short(p2, 10))
+                nodes.append(short(p2, 14))
         if 2 <= len(nodes) <= MAX_ITEMS:
             return nodes
     m = FROM_TO.search(t)
@@ -489,8 +503,8 @@ def build_pages(script: str, subject: str = "", cues=None, audio_duration: float
     spans = sentence_times(raw, list(cues or []), total)
     frames = _contiguous(spans, total + TAIL_SECONDS)
     sents = [analyze(t) for t in raw]
-    for s, (a, b) in zip(sents, frames):
-        s.start, s.end = a, b
+    for s, (a, b), sp in zip(sents, frames, spans):
+        s.start, s.end, s.speech = a, b, sp
     keywords = extract_keywords(script, subject)
     pages: list[Page] = []
     n = len(sents)
@@ -504,7 +518,7 @@ def build_pages(script: str, subject: str = "", cues=None, audio_duration: float
     # 1) 开场标题页：第一句（太短就带上第二句）
     subj = (subject or "").strip().strip(PUNCT_STRIP)
     j1 = 1
-    if n > 2 and sents[0].duration < 2.5 and sents[1].kind == "plain":
+    if n > 2 and sents[0].duration < 2.5 and sents[1].kind == "plain" and not sents[1].topic and not _special(sents[1].text):
         j1 = 2
     first = sents[0]
     title = subj if subj and len(subj) <= 24 else (first.topic or short(first.text, 16))
@@ -541,11 +555,10 @@ def build_pages(script: str, subject: str = "", cues=None, audio_duration: float
         # 3) 主语同类的并列句（与门… 或门… 非门…）→ 对比两栏或编号要点
         if s.topic and len(s.topic) <= 6:
             j = i + 1
-            while j < n and j - i < MAX_ITEMS and sents[j].topic and len(sents[j].topic) <= 6 \
-                    and _common_suffix([s.topic, sents[j].topic]) and sents[j].topic != s.topic:
+            while j < n and j - i < MAX_ITEMS and _parallel(s, sents[j]) and sents[j].topic not in [g.topic for g in sents[i:j]]:
                 j += 1
             group = sents[i:j]
-            if len(group) >= 2 and _common_suffix([g.topic for g in group]):
+            if len(group) >= 2:
                 topics = [g.topic for g in group]
                 bodies = [_after_topic(g.text, g.topic) for g in group]
                 if len(group) == 2:
@@ -554,7 +567,8 @@ def build_pages(script: str, subject: str = "", cues=None, audio_duration: float
                          "left": _points(bodies[0]), "right": _points(bodies[1])},
                         [group[0].start, group[1].start])
                 else:
-                    heading = "、".join(topics) if len("、".join(topics)) <= 14 else f"几种{_common_suffix(topics)}"
+                    suffix = _common_suffix(topics)
+                    heading = "、".join(topics) if len("、".join(topics)) <= 14 or not suffix else f"几种{suffix}"
                     add("bullets", heading, i, j, {"items": [f"{t}：{short(b, 16)}" for t, b in zip(topics, bodies)]},
                         [g.start for g in group])
                 i = j
@@ -576,7 +590,7 @@ def build_pages(script: str, subject: str = "", cues=None, audio_duration: float
             add("compare", s.topic or _heading_for([s], keywords) or "对比", i, i + 1,
                 {"left_title": lt, "right_title": rt, "left": _points(_after_topic(left, lt0)),
                  "right": _points(_after_topic(right, rt0))},
-                [s.start, s.start + s.duration * min(0.85, max(0.3, len(left) / max(1, len(text))))])
+                [s.start, s.speech[0] + (s.speech[1] - s.speech[0]) * min(0.85, max(0.3, len(left) / max(1, len(text))))])
             i += 1
             continue
         lst = _list_items(text)
@@ -641,7 +655,8 @@ def _spread(s: Sentence, text: str, items: list[str]) -> list[float]:
         core = it.rstrip("…")[:4]
         pos = plain.find(core) if core else -1
         frac = pos / max(1, len(plain)) if pos >= 0 else k / max(1, len(items))
-        out.append(s.start + s.duration * min(0.9, frac))
+        a, b = s.speech if s.speech[1] > s.speech[0] else (s.start, s.end)
+        out.append(a + (b - a) * min(0.9, frac) if k else s.start)
     for k in range(1, len(out)):
         out[k] = max(out[k], out[k - 1])
     return out

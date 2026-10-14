@@ -159,7 +159,9 @@ def prepare_materials(task_id: str, params, video_terms, audio_duration) -> list
                 log.info(f"混合来源：{stock} 素材共 {usable:.1f} 秒，够覆盖 {audio_duration:.1f} 秒配音，直接使用素材")
                 return [f for f, _ in clips]
             used = assign_stock(pages, clips)
-            reason = hints.stock_failure_hint(stock) if not clips else ""
+            if not clips:
+                log.warning(f"混合来源：{stock} 没有可用素材，全部改用知识卡片。{hints.stock_failure_hint(stock)}")
+            reason = ""
             log.info(f"混合来源：{stock} 找到 {len(clips)} 段素材（可用 {usable:.1f} 秒），不够覆盖 {audio_duration:.1f} 秒配音；"
                      f"{used} 段放进讲解页，其余 {sum(p.kind != 'stock' for p in pages)} 页用知识卡片补齐。{reason}")
 

@@ -109,16 +109,26 @@
   ];
   const ATTRS = ["placeholder", "aria-label", "title"];
 
-  // 上游的出错提示（st.error，显示在 Markdown 里，上面的规则不碰）：配音失败时只给一句英文，补上中文原因说明。
-  // 只在提示框（stAlert）里、只认这几句固定文字；替换后原句里加了标记，不会重复追加。
-  const TTS_HINT = "【可能的原因】① 日志里是 403（Invalid response status）：微软 Edge 在线配音接口改了验证方式，旧版本会被拒绝——请升级到最新版 AI 短视频工厂（1.0.1 已更新 edge-tts）；② 网络连不上 speech.platform.bing.com（公司网络、代理、防火墙或杀毒软件拦截）；③ 选的声音和文案语言不一致。也可以在「配音服务」里换别的引擎（如硅基流动、Azure TTS V2，需要 API Key），或改用「上传音频」。详见「使用指南 → 出了问题怎么办」。";
+  // 上游的出错提示（st.error，显示在 Markdown 里，上面的规则不碰）：配音失败、素材下载失败时只给一句英文，补上中文说明。
+  // 生成界面后台（svf_ext，[补丁 P5][补丁 P6]）能从日志判断出原因时，会在英文后面接「【原因】……」，这里就只翻译英文那句；
+  // 判断不出时由这里补一段常见原因。只在提示框（stAlert）里、只认这几句固定文字；处理过的不会重复追加。
+  const TTS_HINT = "【可能的原因】① 选的声音和文案语言不一致：中文文案请选 zh-CN 开头的声音（选成 af-ZA、zu-ZA 之类会「No audio was received」）；② 网络或代理连不上微软配音服务器 speech.platform.bing.com（公司网络、代理节点、防火墙或杀毒软件拦截）；③ 日志里是 403（Invalid response status）时是服务验证问题，请升级到最新版 AI 短视频工厂。也可以在「配音服务」里换别的引擎（如硅基流动、Azure TTS V2，需要 API Key），或改用「上传音频」。详见「使用指南 → 出了问题怎么办」。";
+  const STOCK_HINT = "【可能的原因】钥匙无效（Pixabay 返回 400、Pexels 返回 401 或非 JSON；Pexels 目前暂停发放新钥匙，建议改用 Pixabay）、网络或代理连不上素材站，或者没搜到合适的视频。讲知识类主题可以把「视频来源」换成「知识讲解卡片」或「混合」。";
   const ALERTS = [
-    ["failed to synthesize audio; verify the selected voice and TTS connectivity", "配音合成失败（failed to synthesize audio）。" + TTS_HINT],
-    ["配音服务未返回试听音频，请检查相关设置和应用日志。", "配音服务未返回试听音频，请检查相关设置和应用日志。" + TTS_HINT],
+    [/failed to synthesize audio; verify the selected voice and TTS connectivity/, "配音合成失败（failed to synthesize audio）。", TTS_HINT],
+    [/配音服务未返回试听音频，请检查相关设置和应用日志。/, "配音服务未返回试听音频，请检查相关设置和应用日志。", TTS_HINT],
+    [/failed to download video materials from ([a-z_]+)/, "素材下载失败（来源：$1）。", STOCK_HINT],
   ];
   function trAlert(text) {
-    if (text.includes("【可能的原因】")) return null;
-    for (const [from, to] of ALERTS) if (text.includes(from)) return text.replace(from, to);
+    if (text.includes("【可能的原因】") && !/failed to |配音服务未返回试听音频/.test(text.replace(/【可能的原因】[\s\S]*$/, ""))) return null;
+    for (const [re, head, hint] of ALERTS) {
+      if (!re.test(text)) continue;
+      if (text.includes("【原因】") || text.includes("【可能的原因】")) {   // 后台已经给了原因：只把英文那句换成中文
+        if (text.includes(head.replace("$1", ""))) return null;
+        return text.replace(re, head);
+      }
+      return text.replace(re, head) + hint;
+    }
     return null;
   }
 
