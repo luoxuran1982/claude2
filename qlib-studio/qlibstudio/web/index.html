@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qlib 量化研究台</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="zoom.js"></script>
+<script src="vendor/echarts.min.js" defer></script>
+<script src="md.js" defer></script>
+<script src="guide.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icon.svg" alt="" width="28" height="28">
+    <div><b>Qlib 量化研究台</b><small><span id="app-version">v—</span> · 基于微软 Qlib <span id="up-version">—</span></small></div></div>
+  <div class="top-actions">
+    <div class="zoom" role="group" aria-label="界面缩放">
+      <button id="zoom-out" type="button" title="缩小一档（−5%）" aria-label="缩小">−</button>
+      <select id="zoom-select" title="选择缩放比例" aria-label="缩放比例"></select>
+      <button id="zoom-in" type="button" title="放大一档（＋5%）" aria-label="放大">＋</button>
+      <button id="zoom-reset" type="button" title="恢复 100%" aria-label="恢复 100%">↺</button>
+    </div>
+    <button id="quit-btn" class="btn quit" type="button" title="结束正在运行的任务并退出应用">退出</button>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="栏目">
+    <button role="tab" data-tab="data">数据</button>
+    <button role="tab" data-tab="exp">实验</button>
+    <button role="tab" data-tab="report">报告</button>
+    <button role="tab" data-tab="compare">与 QuantLab 对比</button>
+    <button role="tab" data-tab="status">运行状态</button>
+    <button role="tab" data-tab="guide">使用指南</button>
+  </nav>
+</header>
+
+<div class="statusbar">
+  <span id="job-dot" class="dot"></span><span id="job-text">正在连接…</span>
+  <div id="job-bar" class="progress" hidden><i></i></div>
+  <button id="job-cancel" class="btn danger small" type="button" hidden>■ 取消任务</button>
+  <span class="sep">·</span><span class="muted">数据目录：<code id="data-dir">—</code></span>
+</div>
+<div id="error" class="banner error" role="alert" hidden></div>
+
+<main>
+<!-- 数据 -->
+<section class="view" data-view="data">
+  <div class="card">
+    <div class="card-head"><div><h2>数据集</h2>
+      <p class="muted">每个数据集都是一个 Qlib 格式的数据目录（交易日历 + 股票池 + 逐字段二进制文件），实验从这里选。导入时自动做数据质量检查。</p></div>
+      <button class="btn small" id="ds-refresh" type="button">刷新</button></div>
+    <div id="ds-list" class="ds-list"><p class="muted">正在读取…</p></div>
+  </div>
+
+  <div class="card" id="quality-card" hidden>
+    <div class="card-head"><div><h2>数据质量：<span id="q-title"></span></h2><p class="muted" id="q-sub"></p></div>
+      <div class="actions"><button class="btn small" id="q-recheck" type="button">重新检查</button>
+        <button class="btn small" id="q-close" type="button">收起</button></div></div>
+    <div id="q-body"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><div><h2>获取数据</h2><p class="muted">四种来源，最后都统一转成 Qlib 格式（上游 scripts/dump_bin.py）。每次只运行一个任务，进度显示在顶部状态条。</p></div></div>
+    <div class="subtabs" id="src-tabs">
+      <button data-sub="src-demo" class="on">演示数据</button>
+      <button data-sub="src-files">通达信 / CSV</button>
+      <button data-sub="src-futu">富途 / moomoo OpenD</button>
+      <button data-sub="src-community">社区 A 股数据集</button>
+    </div>
+
+    <div class="subpanel on" id="src-demo">
+      <p class="help">没有真实数据时先用它跑通流程。和 QuantLab 用同一个「模拟 A 股」生成器：放了几个弱规律（短期反转、中期动量、放量反转、低波动溢价），
+        也有涨跌停、停牌、晚上市、退市和送转除权，外加一只模拟指数。<b>不是真实行情。</b></p>
+      <div class="form-grid">
+        <label>股票数<input type="number" id="demo-n" value="300" min="20" max="1000"></label>
+        <label>年数<input type="number" id="demo-years" value="6" min="1.5" max="15" step="0.5"></label>
+        <label>名称（可不填）<input id="demo-title" placeholder="演示数据（模拟 A 股）"></label>
+      </div>
+      <div class="actions"><button class="btn primary" id="demo-go" type="button">生成演示数据</button>
+        <span class="muted">300 只 × 6 年约 30 秒</span></div>
+    </div>
+
+    <div class="subpanel" id="src-files">
+      <p class="help">支持：通达信 <code>vipdoc</code> 文件夹（<code>sh/lday/*.day</code>、<code>sz/lday/*.day</code>、<code>bj/lday/*.day</code>，不复权原始价格）、
+        通达信「数据导出」的 txt、CSV / TSV / Excel / Parquet（中英文列名自动识别：日期、开盘、最高、最低、收盘、成交量、成交额，可选代码、名称、复权因子）。
+        一个文件可以是一只股票，也可以带「代码」列放多只。读取逻辑与 QuantLab 相同。</p>
+      <label class="help">文件或文件夹路径（每行一个）</label>
+      <textarea id="files-paths" rows="3" class="code" placeholder="C:\new_tdx\vipdoc&#10;/Users/我/Downloads/日线.csv"></textarea>
+      <div class="actions">
+        <button class="btn small" id="pick-folder" type="button">选择文件夹…</button>
+        <button class="btn small" id="pick-files" type="button">选择文件…</button>
+        <span class="muted" id="pick-note"></span>
+      </div>
+      <div class="form-grid">
+        <label>复权方式
+          <select id="files-adjust">
+            <option value="auto">自动：文件有复权因子用因子；标明「前/后复权」的当作已复权；其余按不复权处理并估算除权</option>
+            <option value="raw">全部按不复权处理（估算除权日）</option>
+            <option value="adjusted">全部当作已复权价格</option>
+          </select></label>
+        <label>名称（可不填）<input id="files-title" placeholder="我的通达信日线"></label>
+      </div>
+      <div class="actions"><button class="btn primary" id="files-go" type="button">导入并转成 Qlib 格式</button></div>
+    </div>
+
+    <div class="subpanel" id="src-futu">
+      <div class="banner warn" id="futu-fake" hidden>当前是<b>模拟 OpenD</b>（环境变量 QLIBSTUDIO_FAKE_FUTU=1，只用于测试和演示），数据是生成的，不是真实行情。</div>
+      <p class="help">需要先在本机打开 <b>富途 OpenD</b> 或 <b>moomoo OpenD</b> 并登录账号（下载地址和步骤见「使用指南 → 01 使用指南 → 富途 OpenD」）。
+        本应用只连本机 <code>127.0.0.1</code>，默认端口 <code>11111</code>。每只股票请求不复权和后复权两份，算出复权因子。</p>
+      <div class="form-row">
+        <label>OpenD 地址 <code>127.0.0.1</code></label>
+        <label>端口 <input type="number" id="futu-port" class="w6" value="11111" min="1" max="65535"></label>
+        <button class="btn" id="futu-check" type="button">测试连接 · 查询额度</button>
+      </div>
+      <div id="futu-quota" class="banner info small" hidden></div>
+      <div class="form-grid">
+        <label>股票代码（逗号、空格或换行分隔）<textarea id="futu-codes" rows="3" class="code" placeholder="600000, 000001, 300750, 688981"></textarea></label>
+        <label>开始日期<input type="date" id="futu-start" value="2019-01-01"></label>
+        <label>结束日期<input type="date" id="futu-end"></label>
+        <label>名称（可不填）<input id="futu-title" placeholder="富途日 K"></label>
+      </div>
+      <div class="actions"><button class="btn primary" id="futu-go" type="button">下载并生成数据集</button>
+        <span class="muted">已在本地缓存覆盖的日期不再请求；30 天内重复请求同一只股票不额外占用额度</span></div>
+      <details><summary>本地缓存（<span id="futu-cache-n">0</span> 只）</summary><div id="futu-cache" class="scroll-y"></div></details>
+    </div>
+
+    <div class="subpanel" id="src-community">
+      <p class="help">社区维护的 A 股数据集 <b>chenditc/investment_data</b>：作者每天从多个公开来源交叉校验后发布 Qlib 格式的 <code>qlib_bin.tar.gz</code>
+        （约 570 MB，解压后约 2–3 GB；含沪深 A 股日线、沪深 300 / 中证 500 等成分股和指数）。Qlib 官方数据集暂停下载后，上游 README 推荐用它。
+        国内网络访问 GitHub 可能很慢；下载中断后再点一次会从断点续传。</p>
+      <div class="actions"><button class="btn primary" id="comm-go" type="button">下载最新一期并导入</button>
+        <label class="switch"><input type="checkbox" id="comm-del" checked> 导入后删除压缩包（省 570 MB 空间）</label></div>
+      <p class="muted">地址：<code id="comm-url">—</code></p>
+      <h3>或者：已经下载好的文件</h3>
+      <div class="path-row"><input id="comm-path" placeholder="/Users/我/Downloads/qlib_bin.tar.gz"><button class="btn small" id="comm-pick" type="button">选择…</button>
+        <button class="btn" id="comm-import" type="button">从本地文件导入</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- 实验 -->
+<section class="view" data-view="exp">
+  <div class="card">
+    <div class="card-head"><div><h2>新实验</h2><p class="muted">因子集 → 模型 → 训练 / 验证 / 测试区间 → 一键运行。训练和回测在独立的工作进程里跑，可以随时取消。</p></div></div>
+    <div class="form-grid">
+      <label>数据集<select id="x-dataset"></select></label>
+      <label>股票池<select id="x-pool"></select></label>
+      <label>因子集<select id="x-factors"></select></label>
+      <label>模型<select id="x-model"></select></label>
+    </div>
+    <p class="muted" id="x-model-note"></p>
+    <h3>区间 <button class="btn small" id="x-auto" type="button">按 6 : 2 : 2 自动填</button></h3>
+    <div class="seg-grid">
+      <span></span><b class="muted">开始</b><b class="muted">结束</b>
+      <span>训练</span><input type="date" id="x-train0"><input type="date" id="x-train1">
+      <span>验证（早停）</span><input type="date" id="x-valid0"><input type="date" id="x-valid1">
+      <span>测试（回测）</span><input type="date" id="x-test0"><input type="date" id="x-test1">
+    </div>
+    <p class="muted" id="x-range-note"></p>
+    <div class="form-row">
+      <label class="switch"><input type="checkbox" id="x-rolling"> 滚动训练：测试期每隔</label>
+      <input type="number" id="x-step" class="w5" value="63" min="20" max="252"><span>个交易日重新训练一次（训练、验证窗口长度不变，跟着往后滑）</span>
+    </div>
+    <h3>回测</h3>
+    <div class="form-grid">
+      <label>持仓股票数（topk）<input type="number" id="x-topk" value="20" min="1" max="500"></label>
+      <label>每天最多换出（n_drop）<input type="number" id="x-ndrop" value="2" min="0" max="500"></label>
+      <label>预测周期（天）<input type="number" id="x-horizon" value="1" min="1" max="20"></label>
+      <label>成交价<select id="x-deal"></select></label>
+      <label>涨跌停规则<select id="x-limit"></select></label>
+      <label>基准<select id="x-bench"></select></label>
+      <label>初始资金（元）<input type="number" id="x-account" value="1000000" min="10000" step="10000"></label>
+      <label>买入费率<input type="number" id="x-open" value="0.0005" step="0.0001" min="0"></label>
+      <label>卖出费率（含印花税）<input type="number" id="x-close" value="0.0015" step="0.0001" min="0"></label>
+      <label>每笔最低费用（元）<input type="number" id="x-min" value="5" step="1" min="0"></label>
+      <label>实验名称（可不填）<input id="x-name" placeholder="自动命名"></label>
+    </div>
+    <div class="actions"><button class="btn primary big" id="x-go" type="button">▶ 运行实验</button>
+      <span class="muted" id="x-go-note"></span></div>
+    <div id="x-job" class="job" hidden>
+      <div class="job-line"><b id="x-job-title"></b><span id="x-job-msg" class="muted"></span></div>
+      <div class="progress big"><i id="x-job-bar"></i></div>
+      <ol class="steps" id="x-job-steps"></ol>
+      <div class="actions"><button class="btn danger small" id="x-cancel" type="button">■ 取消</button>
+        <button class="btn small" id="x-log" type="button">查看日志</button>
+        <button class="btn primary small" id="x-open-report" type="button" hidden>查看报告</button></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>实验记录</h2><p class="muted">点一行打开报告。数值都是测试区间（样本外）的结果。</p></div>
+      <button class="btn small" id="runs-refresh" type="button">刷新</button></div>
+    <div class="table-wrap" id="runs-table"></div>
+  </div>
+</section>
+
+<!-- 报告 -->
+<section class="view" data-view="report">
+  <div class="card">
+    <div class="card-head"><div><h2 id="r-title">报告</h2><p class="muted" id="r-sub">先在「实验」里运行一次，或从实验记录里选一个。</p></div>
+      <div class="actions"><select id="r-select"></select>
+        <button class="btn small" id="r-export" type="button" title="交换格式 JSON，可在「与 QuantLab 对比」里和 QuantLab 的结果并排">导出对比文件</button>
+        <button class="btn small" id="r-trades-csv" type="button">导出成交 CSV</button></div></div>
+    <div id="r-warn"></div>
+    <div class="tiles" id="r-tiles"></div>
+    <div class="subtabs" id="r-tabs">
+      <button data-sub="r-nav" class="on">收益曲线</button>
+      <button data-sub="r-ic">IC / RankIC</button>
+      <button data-sub="r-groups">分层收益</button>
+      <button data-sub="r-pos">持仓</button>
+      <button data-sub="r-trades">交易明细</button>
+      <button data-sub="r-train">训练</button>
+      <button data-sub="r-cfg">配置</button>
+    </div>
+    <div class="subpanel on" id="r-nav"><div class="chart tall" id="c-nav"></div><div class="chart short" id="c-dd"></div>
+      <p class="muted">净值 = 账户价值 ÷ 初始资金（已扣费用）。超额（Qlib 口径）= 每天（组合收益 − 基准收益）累加，与上游 PortAnaRecord 的 excess_return 一致。</p></div>
+    <div class="subpanel" id="r-ic"><div class="tiles" id="r-ic-tiles"></div><div class="chart" id="c-ic"></div>
+      <p class="muted">IC = 每天预测分数与下一期收益的皮尔逊相关；RankIC 用排名（斯皮尔曼）。柱子是每天的值，折线是 20 日均值。上游函数 qlib.contrib.eva.alpha.calc_ic。</p></div>
+    <div class="subpanel" id="r-groups"><div class="chart short" id="c-gmean"></div><div class="chart" id="c-gcurve"></div>
+      <p class="muted" id="r-groups-note"></p></div>
+    <div class="subpanel" id="r-pos"><div class="form-row"><label>日期 <select id="r-pos-date"></select></label><span class="muted" id="r-pos-sum"></span></div>
+      <div class="table-wrap" id="r-pos-table"></div></div>
+    <div class="subpanel" id="r-trades"><div class="form-row"><input id="r-tr-filter" placeholder="按代码、名称或日期筛选"><span class="muted" id="r-tr-sum"></span></div>
+      <div class="table-wrap scroll-y" id="r-tr-table"></div></div>
+    <div class="subpanel" id="r-train"><div class="table-wrap" id="r-folds"></div><div class="chart short" id="c-loss"></div><div class="chart" id="c-imp"></div></div>
+    <div class="subpanel" id="r-cfg"><pre class="log tall" id="r-cfg-body"></pre></div>
+  </div>
+</section>
+
+<!-- 与 QuantLab 对比 -->
+<section class="view" data-view="compare">
+  <div class="card">
+    <div class="card-head"><div><h2>与 QuantLab 对比</h2>
+      <p class="muted">读取 QuantLab 导出的「实验结果交换格式」JSON（QuantLab 1.2.0 起的「导出实验结果」），和本应用的实验并排比较：主要指标、净值、超额、IC。
+        格式说明见「使用指南 → 04 与 QuantLab 的对比 → 交换格式」，也可以下载 <a href="/api/guide/file?path=samples%2Fquantlab-result-example.json" target="_blank" rel="noreferrer">样例文件</a>。</p></div></div>
+    <div class="actions">
+      <label class="btn" for="cmp-file">导入 QuantLab 结果文件…</label><input type="file" id="cmp-file" accept=".json,application/json" multiple hidden>
+      <label class="switch"><input type="checkbox" id="cmp-common" checked> 收益指标按共同区间重新计算</label>
+      <button class="btn primary" id="cmp-go" type="button">对比所选</button>
+    </div>
+    <div class="table-wrap" id="cmp-items"></div>
+  </div>
+  <div class="card" id="cmp-result" hidden>
+    <div id="cmp-warn"></div>
+    <div class="table-wrap" id="cmp-table"></div>
+    <div class="chart tall" id="c-cmp-nav"></div>
+    <div class="chart" id="c-cmp-ex"></div>
+    <div class="chart" id="c-cmp-ic"></div>
+    <h3>设置对照</h3>
+    <div class="table-wrap" id="cmp-settings"></div>
+  </div>
+</section>
+
+<!-- 运行状态 -->
+<section class="view" data-view="status">
+  <div class="card">
+    <div class="card-head"><div><h2>运行状态：当前进程与内存</h2><p class="muted">列出本次启动涉及的每个应用进程；数值每次现读，不用旧值。</p></div>
+      <button class="btn small" id="proc-refresh" type="button">立即刷新</button></div>
+    <div id="proc-body"><p class="muted">正在读取…</p></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>任务记录</h2><p class="muted">最近的导入、下载和实验任务。关闭窗口或点「退出」时，正在运行的任务会被结束。</p></div>
+      <div class="actions"><button class="btn small" id="open-data-dir" type="button">打开数据目录</button></div></div>
+    <div class="table-wrap" id="jobs-table"></div>
+  </div>
+</section>
+
+<!-- 使用指南 -->
+<section class="view" data-view="guide">
+  <div class="guide">
+    <nav class="guide-nav card" id="guide-nav" aria-label="使用指南目录"></nav>
+    <article class="guide-body card" id="guide-body"><p class="muted">正在读取…</p></article>
+  </div>
+</section>
+</main>
+
+<footer class="foot-note">
+  Qlib 量化研究台把微软开源项目 <a href="#" data-url="https://github.com/microsoft/qlib">Qlib</a>（MIT）包成桌面应用；完整源码在「使用指南 → 源码」。
+  仅供学习研究，不构成投资建议。
+</footer>
+
+<dialog id="log-dialog">
+  <form method="dialog"><h2 id="log-title">日志</h2><pre id="log-body" class="log tall"></pre>
+    <div class="dialog-actions"><button class="btn primary">关闭</button></div></form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

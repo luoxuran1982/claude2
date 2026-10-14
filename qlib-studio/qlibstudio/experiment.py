@@ -154,10 +154,12 @@ def init_qlib(ds_dir: str, run_dir: Path | None = None) -> None:
     from qlib.constant import REG_CN
     kw = {}
     if run_dir is not None:
-        # 上游 LGBModel.fit 会把每轮训练/验证损失写进 MLflow（R.log_metrics）；默认写到当前目录的 mlruns/，
-        # 这里指到本次实验目录里，实验结束后删掉（损失曲线另存在 result.json）
+        # 上游 LGBModel.fit 会把每轮训练/验证损失写进 MLflow（R.log_metrics），默认写到当前目录的 mlruns/。
+        # 调用方（run）已把当前目录切到本次实验目录；这里用相对路径 "mlruns"，不用 file:// 地址——
+        # 上游 expm.py 对 file:// 地址做文件锁时会去掉开头的 /，在 macOS/Linux 上把锁建到当前目录下的一串子目录里。
+        # 实验结束后删掉 mlruns/（损失曲线另存在 result.json）。
         kw["exp_manager"] = {"class": "MLflowExpManager", "module_path": "qlib.workflow.expm",
-                             "kwargs": {"uri": (Path(run_dir) / "mlruns").resolve().as_uri(), "default_exp_name": "QlibStudio"}}
+                             "kwargs": {"uri": "mlruns", "default_exp_name": "QlibStudio"}}
     # kernels=1：在本进程里顺序读数据，不再开多进程（打包后的程序开多进程要重新启动整个应用）
     qlib.init(provider_uri=ds_dir, region=REG_CN, kernels=1, expression_cache=None, dataset_cache=None,
               logging_level=logging.WARNING, **kw)
@@ -204,7 +206,7 @@ def make_model(cfg: dict):
         from qlib.contrib.model.catboost_model import CatBoostModel
         if cfg["quick"]:
             p["iterations"] = 60
-        return CatBoostModel(thread_count=threads, random_seed=cfg["seed"], **p)
+        return CatBoostModel(thread_count=threads, random_seed=cfg["seed"], allow_writing_files=False, **p)
     from qlib.contrib.model.linear import LinearModel
     return LinearModel(**p)
 
@@ -282,10 +284,18 @@ def _series(s: pd.Series, n=6) -> list:
 
 
 def run(cfg_in: dict, data_root: Path, out_dir: Path, progress: Progress = lambda p, m: None) -> dict:
+    """当前目录临时切到实验目录：上游 MLflow 记录、CatBoost 等写到当前目录的东西都落在这里，结束后切回。"""
     import warnings
-    with warnings.catch_warnings(), np.errstate(all="ignore"):
-        warnings.simplefilter("ignore")
-        return _run(cfg_in, data_root, Path(out_dir), progress)
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    old = os.getcwd()
+    os.chdir(out_dir)
+    try:
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore")
+            return _run(cfg_in, Path(data_root).resolve(), out_dir, progress)
+    finally:
+        os.chdir(old)
 
 
 def _run(cfg_in: dict, data_root: Path, out: Path, progress: Progress) -> dict:
