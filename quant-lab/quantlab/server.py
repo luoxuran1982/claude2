@@ -19,7 +19,7 @@ import pandas as pd
 from . import APP_NAME, __version__, config, dataset, experiment, guide, sysinfo
 from . import features as F
 from .data import demo
-from .data.store import DataStore
+from .data.store import DataStore, symbol_source
 from .jobs import Jobs
 from .market import BOARDS
 from .paths import resource_dir
@@ -87,8 +87,12 @@ class App:
                 "job": self.jobs.snapshot(), "desktop": self.desktop is not None}
 
     def catalog(self) -> dict:
+        from .data import akshare_source, futu_source, online
         return {"defaults": config.DEFAULTS, "features": F.catalog(), "groups": F.GROUPS,
-                "models": config.MODEL_TYPES, "boards": BOARDS}
+                "models": config.MODEL_TYPES, "boards": BOARDS,
+                "online": {"adjust": online.ADJUST_MODES, "indexes": akshare_source.INDEXES,
+                           "benchmarks": akshare_source.BENCHMARKS,
+                           "futu": {"host": futu_source.DEFAULT_HOST, "port": futu_source.DEFAULT_PORT}}}
 
     def symbols(self, ds: str, q: str) -> list[dict]:
         meta = self.store.meta(ds)
@@ -96,7 +100,9 @@ class App:
         out = []
         for m in meta.get("symbols", []):
             if not q or q in m["symbol"] or q in (m.get("name") or "").lower():
-                out.append({k: m.get(k) for k in ("symbol", "name", "kind", "board", "start", "end", "rows", "adjust", "events")})
+                row = {k: m.get(k) for k in ("symbol", "name", "kind", "board", "start", "end", "rows", "adjust", "events", "checked")}
+                row["source"], row["updated"] = symbol_source(meta, m)
+                out.append(row)
                 if len(out) >= 80:
                     break
         return out
@@ -171,6 +177,10 @@ class App:
             df = self.runs.predictions(run_id)
         elif kind == "config":
             return f"{safe}-配置.json", (p / "config.json").read_bytes()
+        elif kind == "result":
+            from . import export
+            doc = export.build(self.runs, self.store, run_id)
+            return f"{safe}-实验结果.json", json.dumps(doc, ensure_ascii=False, indent=1, allow_nan=False).encode("utf-8")
         else:
             raise ValueError("未知导出类型")
         label = {"trades": "交易记录", "nav": "净值", "picks": "最新选股", "predictions": "样本外预测"}[kind]
@@ -194,6 +204,71 @@ class App:
             dataset.clear_cache()
             return {"dataset": meta["id"]}
         return self.jobs.start("import", f"导入 {Path(path).name}", work)
+
+    def start_online(self, body: dict) -> dict:
+        """在线下载（AKShare / 富途 OpenD）→ 写进新数据集或增量更新已有数据集。"""
+        from .data import akshare_source, futu_source, online
+        source = body.get("source")
+        if source not in ("akshare", "futu"):
+            raise ValueError("未知数据源")
+        adjust = str(body.get("adjust") or "factor")
+        if adjust not in online.ADJUST_MODES:
+            raise ValueError("复权方式无效")
+        start = str(body.get("start") or "2015-01-01")
+        end = str(body.get("end") or time.strftime("%Y-%m-%d"))
+        try:
+            if pd.Timestamp(start) > pd.Timestamp(end):
+                raise ValueError("开始日期晚于结束日期")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"日期无效：{exc}") from None
+        target = str(body.get("target") or "").strip() or None
+        if target and not self.store.exists(target):
+            raise ValueError("要更新的数据集不存在")
+        scope = body.get("scope") or "custom"
+        if scope == "dataset" and not target:
+            raise ValueError("「沿用数据集里的股票」需要先在「写入到」里选一个已有数据集")
+        if source == "futu" and scope == "all":
+            raise ValueError("富途历史 K 线有额度限制，不支持「全部 A 股」：请用指数成分或自选代码，或改用 AKShare")
+        interval = min(max(float(body.get("interval") or (0.5 if source == "akshare" else 0.6)), 0.0), 10.0)
+        title = str(body.get("title") or "").strip() or (None if target else
+                                                         ("AKShare A股日线" if source == "akshare" else "富途 OpenD 日线"))
+        ds_symbols = [m["symbol"] for m in self.store.meta(target).get("symbols", [])] if target else []
+        if source == "futu":
+            futu_source.FutuFetcher(body.get("host"), body.get("port"))   # 先校验地址端口
+        label = "AKShare" if source == "akshare" else "富途 OpenD"
+
+        def work(progress):
+            lister = akshare_source.AkshareFetcher(interval=interval)
+            progress(0.005, "确定股票范围")
+            syms, names, notes = akshare_source.resolve_universe(lister, body, ds_symbols)
+            if source == "akshare":
+                fetcher, budget = lister, None
+            else:
+                fetcher = futu_source.FutuFetcher(body.get("host"), body.get("port"), interval=interval)
+                budget = fetcher.budget
+            try:
+                for n in notes:
+                    progress(0.01, n)
+                res = online.download(self.store, fetcher, syms, start=start, end=end, adjust=adjust, ds_id=target,
+                                      title=title or "", names=names, progress=progress, budget=budget)
+            finally:
+                if source == "futu":
+                    fetcher.close()
+            dataset.clear_cache()
+            progress(1.0, res.message)
+            return {"dataset": res.meta["id"], "message": res.message, "failed": len(res.failed),
+                    "skipped_quota": res.skipped_quota[:50], "notes": notes}
+        return self.jobs.start("download", f"{label} 下载日线", work)
+
+    def futu_quota(self, body: dict) -> dict:
+        from .data import futu_source
+        f = futu_source.FutuFetcher(body.get("host"), body.get("port"), open_timeout=10)
+        try:
+            q = f.quota()
+        finally:
+            f.close()
+        q["recent"] = q["recent"][:500]
+        return q
 
     def start_demo(self, body: dict) -> dict:
         n = int(body.get("n_stocks") or 300)
@@ -333,6 +408,14 @@ def make_handler(app: App, port: int):
             try:
                 if path == "/api/import":
                     return self.json({"job": app.start_import(body)}, 202)
+                if path == "/api/online/start":
+                    return self.json({"job": app.start_online(body)}, 202)
+                if path == "/api/futu/quota":
+                    from .data.online import SourceError
+                    try:
+                        return self.json(app.futu_quota(body))
+                    except SourceError as exc:
+                        return self.json({"error": str(exc)}, 400)
                 if path == "/api/demo":
                     return self.json({"job": app.start_demo(body)}, 202)
                 if path == "/api/run/start":

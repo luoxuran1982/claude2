@@ -347,6 +347,13 @@ class TestServer(unittest.TestCase):
             self.assertEqual(job["status"], "done")
             syms = get("/api/symbols?id=demo&q=sh6")["symbols"]
             self.assertTrue(syms)
+            self.assertEqual(syms[0]["source"], "演示数据")      # 1.2.0：每只证券的来源和更新时间
+            self.assertTrue(syms[0]["updated"])
+            self.assertIn("factor", get("/api/catalog")["online"]["adjust"])
+            with self.assertRaises(urllib.error.HTTPError) as cm:   # 参数错误立即返回中文原因
+                post("/api/online/start", {"source": "futu", "scope": "all"})
+            self.assertEqual(cm.exception.code, 400)
+            self.assertIn("额度", json.loads(cm.exception.read())["error"])
             bars = get(f"/api/bars?id=demo&symbol={syms[0]['symbol']}")
             self.assertEqual(len(bars["dates"]), len(bars["ohlc"]))
             self.assertIn("lgbm", get("/api/catalog")["models"])

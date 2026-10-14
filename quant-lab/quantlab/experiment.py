@@ -187,6 +187,7 @@ def _run(store: DataStore, runs: Runs, cfg_in: dict, progress: Progress) -> str:
                       "ic": [_clean(v) for v in ic_plot["ic"]], "rank_ic": [_clean(v) for v in ic_plot["rank_ic"]]},
         "groups": groups, "importance": imp, "factors": factors, "folds": wf["folds"],
         "final_positions": res["final_positions"], "latest_date": latest_date.strftime("%Y-%m-%d"),
+        "universe_symbols": list(s.panel.symbols),
     }
     (out / "summary.json").write_text(json.dumps(_clean(summary), ensure_ascii=False), encoding="utf-8")
     progress(1.0, f"完成：年化 {(perf.get('cagr') or 0) * 100:.1f}%，夏普 {perf.get('sharpe')}")
