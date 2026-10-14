@@ -89,6 +89,25 @@ class DataStore:
             raise ValueError("数据集编号无效")
         return self.root / ds_id
 
+    def exists(self, ds_id: str) -> bool:
+        try:
+            return (self._dir(ds_id) / "meta.json").exists()
+        except ValueError:
+            return False
+
+    def touch(self, ds_id: str, symbols: list[str]) -> None:
+        """在线更新时这些代码已是最新：记下检查时间（数据本身不变）。"""
+        if not symbols or not self.exists(ds_id):
+            return
+        meta = self.meta(ds_id)
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        want = set(symbols)
+        for m in meta.get("symbols", []):
+            if m["symbol"] in want:
+                m["checked"] = now
+        meta["checked"] = now
+        (self._dir(ds_id) / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+
     def delete(self, ds_id: str) -> None:
         shutil.rmtree(self._dir(ds_id), ignore_errors=True)
         self._cache = None
@@ -158,6 +177,22 @@ class DataStore:
         if not series:
             raise ValueError("文件里没有识别出所选类型的证券。" + ("；".join(issues[:3]) if issues else ""))
 
+        if not title:
+            exists = merge and ds_id and (self._dir(ds_id) / "meta.json").exists()
+            title = self.meta(ds_id).get("title", "") if exists else src.name
+        return self.ingest(series, title=title, ds_id=ds_id, merge=merge, auto_adjust=auto_adjust,
+                           source=str(src), issues=issues, n_files=len(files), progress=progress)
+
+    def ingest(self, series: dict[str, "readers.Series"], *, title: str, ds_id: str | None = None,
+               merge: bool = False, auto_adjust: bool = True, source: str = "", issues: list[str] | None = None,
+               n_files: int = 0, progress: Progress = _noop, replace: set[str] | None = None) -> dict:
+        """把若干只证券的日线写进数据集（本地导入、AKShare、富途 OpenD 共用）。
+
+        每只证券在 meta.symbols 里记录 source（数据来源）和 updated（最后更新时间）。
+        merge=True 时与已有数据合并：重叠日期以新数据为准；replace 里的代码先删掉旧数据再写（复权口径变了时整段重下）。
+        """
+        issues = list(issues or [])
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
         progress(0.68, "复权处理")
         frames, sym_meta = [], []
         n_events = 0
@@ -168,7 +203,7 @@ class DataStore:
                 method = "复权因子列"
             elif s.adjusted:
                 df["factor"] = 1.0
-                method = "已复权数据"
+                method = s.adjust_label or "已复权数据"
             elif auto_adjust and classify(sym)[0] == "stock":
                 df["factor"], events = adjust.estimate_factor(sym, df)
                 method = "跳空估算"
@@ -182,7 +217,8 @@ class DataStore:
             sym_meta.append({"symbol": sym, "name": s.name or "", "kind": kind, "board": board,
                              "start": df["date"].iloc[0].strftime("%Y-%m-%d"),
                              "end": df["date"].iloc[-1].strftime("%Y-%m-%d"),
-                             "rows": len(df), "adjust": method, "events": [d.strftime("%Y-%m-%d") for d in events][:20]})
+                             "rows": len(df), "adjust": method, "events": [d.strftime("%Y-%m-%d") for d in events][:20],
+                             "source": s.source_label or source_label_of(s.source), "updated": now})
             for note in s.notes:
                 if len(issues) < 500:
                     issues.append(f"{sym}: {note}")
@@ -190,11 +226,15 @@ class DataStore:
 
         ds_id = ds_id or time.strftime("ds%Y%m%d_%H%M%S")
         target = self._dir(ds_id)
+        old_info = {}
         if merge and (target / "bars.parquet").exists():
             progress(0.8, "与已有数据合并")
+            old_info = self.meta(ds_id)
             old = pd.read_parquet(target / "bars.parquet")
             old["symbol"] = old["symbol"].astype(str)
-            old_meta = {m["symbol"]: m for m in self.meta(ds_id).get("symbols", [])}
+            if replace:
+                old = old[~old["symbol"].isin(replace)]
+            old_meta = {m["symbol"]: m for m in old_info.get("symbols", [])}
             bars = pd.concat([old, bars]).drop_duplicates(["symbol", "date"], keep="last")
             bars = _recompute_factor_after_merge(bars, series, auto_adjust)
             new_syms = {m["symbol"] for m in sym_meta}
@@ -202,33 +242,48 @@ class DataStore:
                 if not m["name"] and m["symbol"] in old_meta:
                     m["name"] = old_meta[m["symbol"]].get("name", "")
             sym_meta = [m for s, m in old_meta.items() if s not in new_syms] + sym_meta
-            title = title or self.meta(ds_id).get("title", "")
+            title = title or old_info.get("title", "")
             sym_meta = _refresh_ranges(bars, sym_meta)
         progress(0.88, "写入数据集")
         bars = bars.sort_values(["symbol", "date"]).reset_index(drop=True)
-        for col in ("open", "high", "low", "close", "factor"):
-            bars[col] = bars[col].astype("float64")
-        for col in ("volume", "amount"):
+        for col in ("open", "high", "low", "close", "factor", "volume", "amount"):
             bars[col] = bars[col].astype("float64")
         target.mkdir(parents=True, exist_ok=True)
         tmp = target / "bars.parquet.tmp"
         bars.to_parquet(tmp, index=False, compression="zstd")
         tmp.replace(target / "bars.parquet")
+        sym_meta.sort(key=lambda m: m["symbol"])
         kinds_count = pd.Series([m["kind"] for m in sym_meta]).value_counts().to_dict()
         boards_count = pd.Series([m["board"] for m in sym_meta if m["board"]]).value_counts().to_dict()
+        fallback = _fallback_source(old_info) if old_info else source_label_of(source)
+        sources = pd.Series([m.get("source") or fallback for m in sym_meta]).value_counts().to_dict()
         meta = {
-            "id": ds_id, "title": title or src.name, "source": str(src),
-            "created": time.strftime("%Y-%m-%d %H:%M:%S"), "revision": f"{time.time():.3f}",
+            "id": ds_id, "title": title or ds_id, "source": old_info.get("source") or source,
+            "created": old_info.get("created") or now, "updated": now, "revision": f"{time.time():.3f}",
             "n_symbols": len(sym_meta), "n_rows": int(len(bars)),
             "start": bars["date"].min().strftime("%Y-%m-%d"), "end": bars["date"].max().strftime("%Y-%m-%d"),
             "kinds": kinds_count, "boards": {BOARDS.get(k, k): v for k, v in boards_count.items()},
-            "adjust_events": n_events, "n_files": len(files), "issues_count": len(issues),
+            "sources": sources,
+            "adjust_events": n_events,
+            "n_files": n_files, "issues_count": len(issues),
             "symbols": sym_meta, "issues": issues[:500], "demo": False,
         }
         (target / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
         self._cache = None
-        progress(1.0, f"导入完成：{len(sym_meta)} 只证券，{len(bars):,} 行")
+        progress(1.0, f"写入完成：{len(sym_meta)} 只证券，{len(bars):,} 行")
         return {k: v for k, v in meta.items() if k not in ("symbols", "issues")}
+
+    def last_rows(self, ds_id: str) -> dict[str, dict]:
+        """每只证券最后一行（增量更新用）：{代码: {date, close, factor, start}}。数据集不存在时返回空。"""
+        try:
+            df = self.bars(ds_id)
+        except (LookupError, ValueError, OSError):
+            return {}
+        df = df.sort_values(["symbol", "date"])
+        first = df.groupby("symbol")["date"].min()
+        last = df.groupby("symbol").tail(1).set_index("symbol")
+        return {sym: {"date": r["date"], "close": float(r["close"]), "factor": float(r["factor"]),
+                      "start": first[sym]} for sym, r in last.iterrows()}
 
     def save_frame(self, bars: pd.DataFrame, title: str, names: dict[str, str], ds_id: str, demo=False) -> dict:
         """直接保存一个长表（演示数据、测试用）。"""
@@ -241,13 +296,15 @@ class DataStore:
             kind, board = classify(sym)
             sym_meta.append({"symbol": sym, "name": names.get(sym, ""), "kind": kind, "board": board,
                              "start": g["date"].iloc[0].strftime("%Y-%m-%d"), "end": g["date"].iloc[-1].strftime("%Y-%m-%d"),
-                             "rows": len(g), "adjust": "已复权数据", "events": []})
+                             "rows": len(g), "adjust": "已复权数据", "events": [],
+                             "source": "演示数据" if demo else "内置生成", "updated": time.strftime("%Y-%m-%d %H:%M:%S")})
         meta = {"id": ds_id, "title": title, "source": "内置生成", "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "revision": f"{time.time():.3f}", "n_symbols": len(sym_meta), "n_rows": int(len(bars)),
                 "start": bars["date"].min().strftime("%Y-%m-%d"), "end": bars["date"].max().strftime("%Y-%m-%d"),
                 "kinds": pd.Series([m["kind"] for m in sym_meta]).value_counts().to_dict(),
                 "boards": {BOARDS.get(k, k): v for k, v in
                            pd.Series([m["board"] for m in sym_meta if m["board"]]).value_counts().to_dict().items()},
+                "updated": time.strftime("%Y-%m-%d %H:%M:%S"), "sources": {"演示数据" if demo else "内置生成": len(sym_meta)},
                 "adjust_events": 0, "n_files": 0, "issues_count": 0, "symbols": sym_meta, "issues": [], "demo": demo}
         (target / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
         self._cache = None
@@ -295,6 +352,26 @@ def _refresh_ranges(bars: pd.DataFrame, sym_meta: list[dict]) -> list[dict]:
             r = agg.loc[m["symbol"]]
             m.update(start=r["min"].strftime("%Y-%m-%d"), end=r["max"].strftime("%Y-%m-%d"), rows=int(r["count"]))
     return sym_meta
+
+
+def source_label_of(path: str) -> str:
+    """本地文件的来源名称：通达信 .day 记作「通达信」，其余记作「本地文件」。"""
+    text = str(path or "")
+    if text.lower().endswith(".day") or "vipdoc" in text.lower():
+        return "通达信"
+    return "本地文件" if text else "未知"
+
+
+def _fallback_source(meta: dict) -> str:
+    """1.2.0 之前导入的数据没有逐只记录来源：按数据集整体推断。"""
+    if meta.get("demo"):
+        return "演示数据"
+    return source_label_of(meta.get("source", ""))
+
+
+def symbol_source(meta: dict, m: dict) -> tuple[str, str]:
+    """(来源, 最后更新时间)；老数据集退回到数据集级别的信息。"""
+    return (m.get("source") or _fallback_source(meta), m.get("updated") or meta.get("updated") or meta.get("created", ""))
 
 
 def symbols_where(meta: dict, kinds=("stock",), boards=None) -> list[str]:

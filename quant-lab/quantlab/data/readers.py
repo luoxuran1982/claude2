@@ -48,6 +48,8 @@ class Series:
     adjusted: bool = False
     source: str = ""
     notes: list[str] = field(default_factory=list)
+    source_label: str = ""     # 界面上显示的数据来源，如「AKShare」「富途 OpenD」；空 = 按文件推断
+    adjust_label: str = ""     # 已复权数据的口径说明，如「前复权」「后复权」
 
 
 def _norm(col) -> str:
