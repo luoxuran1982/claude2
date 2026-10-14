@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif" font-size="14">
-  <title>AI 短视频工厂 1.0.1 系统架构</title>
+  <title>AI 短视频工厂 1.0.2 系统架构</title>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#475467"/></marker>
   </defs>
   <rect width="1000" height="640" fill="#ffffff"/>
-  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.1：进程与数据流</text>
+  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.2：进程与数据流</text>
 
   <!-- 启动器 -->
   <rect x="30" y="55" width="420" height="300" rx="12" fill="#eef2ff" stroke="#1f3a8a" stroke-width="2"/>
@@ -30,7 +30,7 @@
   <text x="575" y="140" fill="#475467">webui/Main.py：MoneyPrinterTurbo 界面</text>
   <text x="575" y="162" fill="#475467">app/services/task.py：流水线</text>
   <text x="575" y="184" fill="#475467">文案 → 关键词 → 配音 → 字幕 → 素材 → 合成</text>
-  <text x="575" y="206" fill="#475467">svf_child.py 看门狗：启动器不在就自行结束</text>
+  <text x="575" y="206" fill="#c2410c">svf_ext（[补丁 P5][P6]）：知识讲解卡片、中文原因、代理</text>
   <rect x="560" y="230" width="185" height="110" rx="8" fill="#fff" stroke="#98a2b3"/>
   <text x="575" y="253" font-weight="bold">FFmpeg 子进程</text>
   <text x="575" y="275" fill="#475467">MoviePy 剪辑拼接</text>
@@ -52,7 +52,7 @@
   <rect x="540" y="390" width="430" height="120" rx="12" fill="#f0fdf4" stroke="#15803d" stroke-width="2"/>
   <text x="555" y="415" font-weight="bold" fill="#15803d">云端服务（网络，不在本机运行）</text>
   <text x="555" y="440" fill="#344054">大模型 API：写文案 1 次 + 生成英文搜索词 1 次</text>
-  <text x="555" y="462" fill="#344054">Pexels / Pixabay / Coverr：按关键词搜索并下载视频片段</text>
+  <text x="555" y="462" fill="#344054">Pixabay / Pexels / Coverr：搜索下载片段（可走素材下载代理）</text>
   <text x="555" y="484" fill="#344054">Edge TTS：中文配音 + 逐词时间戳（字幕）</text>
   <text x="555" y="502" fill="#344054">（可选）付费 AI 视频 / 生图、Upload-Post 自动发布</text>
   <line x1="855" y1="340" x2="855" y2="390" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
@@ -67,8 +67,9 @@
   <text x="45" y="532" fill="#344054">fonts/  songs/  字体与背景音乐（MPT_FONT_DIR / MPT_SONG_DIR）</text>
   <text x="45" y="554" fill="#344054">logs/launcher.log  logs/webui.log</text>
   <text x="45" y="576" fill="#344054">shell.json 缩放档位　run.json 运行记录（退出时删除）</text>
+  <text x="45" y="598" fill="#344054">storage/tasks/…/knowledge-cards/  知识卡片每页画面（1.0.2）</text>
   <line x1="660" y1="355" x2="420" y2="390" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
   <text x="560" y="380" fill="#475467">读写</text>
   <text x="560" y="600" fill="#475467" font-size="12">安装包内（只读）：payload/runtime 随包 Python、payload/upstream 上游源码、</text>
-  <text x="560" y="618" fill="#475467" font-size="12">payload/fonts 开源字体、payload/project 文档与源码</text>
+  <text x="560" y="618" fill="#475467" font-size="12">payload/fonts 开源字体、payload/child 后台入口与 svf_ext、payload/project 文档与源码</text>
 </svg>

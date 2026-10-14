@@ -9,7 +9,9 @@
 3. 使用指南：逐篇打开 README、UPSTREAM 和 docs/ 全部文档，内容完整、图片能显示、站内链接能跳转、附件能下载；
    源码清单、外壳和上游源码只读查看、源码 zip 下载；窄窗口下入口仍可见。
 4. 运行状态：表里的 PID 与 ps 抽样一致（含内存），重启后台后列表更新、旧 PID 消失。
-5. （--generate）走通一条主要操作：本地素材 + 无配音（不需要网络和 Key）生成一条视频；生成中 FFmpeg 子进程出现在运行状态里，结束后消失。
+5. （--generate）走通一条主要操作：本地素材 + 无配音（不需要网络和 Key）生成一条视频；生成中 FFmpeg 子进程出现在运行状态里，结束后消失；
+   再用「知识讲解卡片」+ 无配音生成一条（1.0.2）。
+5b. 1.0.2：视频来源下拉的「程序生成」组、卡片配色、声音和文案语言不一致提醒、钥匙填错栏位提示、素材下载代理输入框。
 6. 扫一遍 Streamlit 页面里剩下的英文。
 7. 点「退出」：启动器、后台全部结束，端口释放。
 结果写到 <截图目录>/ui_check_report.json。
@@ -338,6 +340,28 @@ def run_status(page, rec: dict, shots: Path, base: str):
            "重启生成界面后台后，列表换成新 PID，旧 PID 不再显示", f"旧 {old} → 新 {new}；表中 {sorted(tbl2)}")
 
 
+def finals_of(data: Path) -> set:
+    tasks = data / "storage" / "tasks"
+    return set(tasks.glob("*/final-1.mp4")) if tasks.exists() else set()
+
+
+def wait_generation(page, frame, data: Path, before: set, base: str = "", timeout: int = 600):
+    """等这次生成结束：出现新的成片（不在 before 里）且页面显示完成，或页面显示失败。返回 (成功, 新成片, 期间见过的 FFmpeg PID)。"""
+    t0 = time.time()
+    saw_ffmpeg = set()
+    new = []
+    while time.time() - t0 < timeout:
+        if base:
+            procs = page.request.get(base + "/api/processes").json()["processes"]
+            saw_ffmpeg |= {p["pid"] for p in procs if "ffmpeg" in p["name"].lower()}
+        new = sorted(finals_of(data) - before)
+        body = frame.inner_text("body")
+        if (new and "视频生成完成" in body) or ("视频生成失败" in body and time.time() - t0 > 5):
+            break
+        time.sleep(1.5)
+    return bool(new) and "视频生成完成" in frame.inner_text("body"), new, saw_ffmpeg
+
+
 def run_generate(page, base: str, data: Path, media: Path):
     page.click("#tab-studio")
     frame = wait_studio(page)
@@ -353,18 +377,10 @@ def run_generate(page, base: str, data: Path, media: Path):
     frame.wait_for_timeout(800)
     frame.locator("button").filter(has_text="无配音").first.click()
     frame.wait_for_timeout(2000)
-    frame.locator("button").filter(has_text="生成视频").last.click()
+    before = finals_of(data)
     t0 = time.time()
-    saw_ffmpeg = set()
-    while time.time() - t0 < 600:
-        procs = page.request.get(base + "/api/processes").json()["processes"]
-        saw_ffmpeg |= {p["pid"] for p in procs if "ffmpeg" in p["name"].lower()}
-        body = frame.inner_text("body")
-        if "视频生成完成" in body or "视频生成失败" in body:
-            break
-        time.sleep(1.5)
-    done = "视频生成完成" in frame.inner_text("body")
-    finals = list((data / "storage" / "tasks").glob("*/final-1.mp4"))
+    frame.locator("button").filter(has_text="生成视频").last.click()
+    done, finals, saw_ffmpeg = wait_generation(page, frame, data, before, base)
     page.screenshot(path=str(Path(REPORT["shots"]) / "generate-done.png"))
     expect(done and finals, "主要操作：本地素材 + 无配音生成一条视频（离线）",
            f"用时 {time.time() - t0:.0f} 秒，成片 {finals[0] if finals else '无'}")
@@ -376,6 +392,101 @@ def run_generate(page, base: str, data: Path, media: Path):
         out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_name,width,height",
                               "-of", "compact", str(finals[0])], capture_output=True, text=True).stdout
         ok("成片信息", out.replace("\n", " "))
+
+
+def voice_select(frame, text):
+    """在「配音声音」下拉里输入并选中一个声音。"""
+    box = frame.locator("[data-testid='stSelectbox']").filter(has_text="配音声音").first
+    box.locator("input").first.click()
+    frame.page.keyboard.press("Control+a")
+    frame.page.keyboard.press("Backspace")
+    frame.page.keyboard.type(text)
+    frame.wait_for_timeout(800)
+    frame.page.keyboard.press("Enter")
+    frame.wait_for_timeout(2500)
+
+
+def run_cards_ui(page, shots: Path, data: Path):
+    """1.0.2：程序生成来源、卡片配色、声音语言提醒、钥匙格式提示、素材下载代理。"""
+    page.click("#tab-studio")
+    frame = wait_studio(page)
+    dismiss_tour(frame)
+    sel = frame.locator(".mpt-grouped-select select").first
+    groups = sel.evaluate("s => [...s.querySelectorAll('optgroup')].map(g => [g.label, [...g.querySelectorAll('option')].map(o => o.value)])")
+    prog = dict((g[0], g[1]) for g in groups).get("程序生成", [])
+    expect(prog == ["knowledge_cards", "hybrid_pixabay", "hybrid_pexels"], "视频来源下拉单列「程序生成」组（知识讲解卡片、两种混合）", str(groups))
+    sel.select_option(value="knowledge_cards")
+    frame.wait_for_timeout(3000)
+    body = frame.inner_text("body")
+    expect("卡片配色" in body and "不需要素材钥匙" in body, "选「知识讲解卡片」后显示说明和「卡片配色」")
+    page.screenshot(path=str(shots / "cards-source-100.png"))
+    frame.locator("textarea[aria-label*='视频主题']").first.fill("逻辑门是怎样工作的")
+    frame.locator("textarea[aria-label*='视频主题']").first.press("Tab")
+    frame.wait_for_timeout(1500)
+    voice_select(frame, "af-ZA-Adri")
+    frame.wait_for_timeout(1500)
+    body = frame.inner_text("body")
+    expect("不是中文" in body and "No audio was received" in body, "中文主题选了 af-ZA 声音时提醒语言不一致")
+    warn = frame.locator("[data-testid='stAlert']").filter(has_text="不是中文").first
+    if warn.count():
+        warn.scroll_into_view_if_needed()
+        page.screenshot(path=str(shots / "voice-language-warning.png"))
+    voice_select(frame, "zh-CN-Xiaoxiao")
+    expect("不是中文" not in frame.inner_text("body"), "换回 zh-CN 声音后提醒消失")
+    frame.locator("button").filter(has_text="配置素材来源").first.click()
+    frame.wait_for_selector("[role='dialog']", timeout=15000)
+    dlg = frame.locator("[role='dialog']").first
+    pex = dlg.locator("input[aria-label^='Pexels API Key']").first
+    pex.fill("12345678-0123456789abcdef012345678")
+    pex.press("Enter")
+    frame.wait_for_timeout(2500)
+    expect("这像是 Pixabay 的钥匙" in dlg.inner_text(), "Pixabay 格式的钥匙填进 Pexels 栏时提示")
+    proxy = dlg.locator("input[aria-label*='素材下载代理']").first
+    expect(proxy.count() == 1, "素材来源设置里有「素材下载代理」输入框")
+    proxy.fill("http://127.0.0.1:7897")
+    proxy.press("Enter")
+    frame.wait_for_timeout(2500)
+    expect("素材搜索和下载走代理" in dlg.inner_text(), "填了素材下载代理后显示生效说明")
+    proxy.scroll_into_view_if_needed()
+    page.screenshot(path=str(shots / "material-settings-proxy.png"))
+    pex.fill("")
+    pex.press("Enter")
+    proxy.fill("")
+    proxy.press("Enter")
+    frame.wait_for_timeout(2500)
+    expect("这像是" not in dlg.inner_text(), "清空后钥匙提示消失")
+    page.keyboard.press("Escape")
+    frame.wait_for_timeout(1500)
+
+
+def run_generate_cards(page, base: str, data: Path):
+    """知识讲解卡片 + 无配音：不需要网络和任何钥匙，走通一条出片。"""
+    page.click("#tab-studio")
+    frame = wait_studio(page)
+    dismiss_tour(frame)
+    frame.locator(".mpt-grouped-select select").first.select_option(value="knowledge_cards")
+    frame.wait_for_timeout(2500)
+    frame.locator("textarea[aria-label*='视频主题']").first.fill("逻辑门")
+    frame.locator("textarea[aria-label*='视频文案']").first.fill(
+        "逻辑门是数字电路的基本单元。与门只有两个输入都为1时才输出1。或门只要有一个输入为1就输出1。非门则把输入取反。"
+        "计算机先把信号转成二进制，再交给逻辑门运算，最后输出结果。")
+    frame.wait_for_timeout(800)
+    frame.locator("button").filter(has_text="无配音").first.click()
+    frame.wait_for_timeout(2000)
+    before = finals_of(data)
+    t0 = time.time()
+    frame.locator("button").filter(has_text="生成视频").last.click()
+    done, finals, _ = wait_generation(page, frame, data, before)
+    stills = list(finals[0].parent.glob("knowledge-cards/page-*.png")) if finals else []
+    page.screenshot(path=str(Path(REPORT["shots"]) / "generate-cards-done.png"))
+    expect(done and finals and stills, "主要操作：知识讲解卡片 + 无配音生成一条视频（离线、无钥匙）",
+           f"用时 {time.time() - t0:.0f} 秒，成片 {finals[0] if finals else '无'}，讲解页 {len(stills)} 张")
+    if finals:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_name,width,height",
+                              "-of", "compact", str(finals[0])], capture_output=True, text=True).stdout
+        ok("知识卡片成片信息", out.replace("\n", " "))
+        for k, f in enumerate(sorted(stills)[:3]):
+            shutil.copy(f, Path(REPORT["shots"]) / f"cards-page-{k + 1}.png")
 
 
 ICONS = {"expand_more", "settings", "keyboard_arrow_right", "keyboard_arrow_down", "auto_awesome", "restart_alt", "preview",
@@ -446,6 +557,7 @@ def main():
             run_narrow(page)
             rec = json.loads((data / "run.json").read_text(encoding="utf-8"))
             run_status(page, rec, shots, base)
+            run_cards_ui(page, shots, data)
             if a.generate:
                 media = Path(a.media) if a.media else Path(tempfile.mkdtemp(prefix="svf-media-"))
                 for i, src in enumerate(("testsrc2", "mandelbrot"), 1):
@@ -453,6 +565,7 @@ def main():
                         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"{src}=size=1080x1920:rate=25",
                                         "-t", "8", "-pix_fmt", "yuv420p", "-c:v", "libx264", str(media / f"clip{i}.mp4")], check=True)
                 run_generate(page, base, data, media)
+                run_generate_cards(page, base, data)
             page.click("#tab-studio")
             wait_studio(page)
             scan_english(page)
