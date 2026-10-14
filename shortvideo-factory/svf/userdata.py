@@ -2,18 +2,20 @@
 
 第一次启动时：
 - 用上游的 config.example.toml 生成 config.toml，并把界面语言设成中文、默认字幕字体设成随包的思源黑体
-  （Noto Sans SC，SIL OFL 1.1）。以后不再改动这个文件，用户在界面里填的 API Key 都保存在这里。
+  （Noto Sans SC，SIL OFL 1.1）、默认配音声音设成中文（晓晓）。用户在界面里填的 API Key 都保存在这里。
+  以后只做一件事：配置里还没有 voice_name 时补上默认中文声音（1.0.1 起；已有的设置一律不动）。
 - 把随包的开源字体复制到 fonts/（已存在且大小相同的跳过；用户自己放进去的字体不动）。
 - 建好空的 songs/（背景音乐，用户自己放 mp3）和 storage/（生成的视频与缓存）。
 """
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tomllib
 from pathlib import Path
 
-from . import DEFAULT_FONT
+from . import DEFAULT_FONT, DEFAULT_VOICE
 
 SUBDIRS = ("storage", "fonts", "songs", "logs")
 # 上游自带、许可证清楚（SIL OFL 1.1）的字体，也复制给用户选用
@@ -44,8 +46,8 @@ def ensure_dirs(data: Path) -> None:
         (data / sub).mkdir(parents=True, exist_ok=True)
 
 
-def initial_config_text(example: str, font: str = DEFAULT_FONT) -> str:
-    """在上游示例配置的基础上：界面语言中文、默认字幕字体用随包开源字体。[ui] 是示例里的最后一节。"""
+def initial_config_text(example: str, font: str = DEFAULT_FONT, voice: str = DEFAULT_VOICE) -> str:
+    """在上游示例配置的基础上：界面语言中文、默认字幕字体用随包开源字体、默认中文配音声音。[ui] 是示例里的最后一节。"""
     text = example.replace('\n# language = "zh"\n', '\nlanguage = "zh"\n', 1)
     parsed = tomllib.loads(text)
     ui = parsed.get("ui")
@@ -56,9 +58,55 @@ def initial_config_text(example: str, font: str = DEFAULT_FONT) -> str:
         raise ValueError("config.example.toml 的 [ui] 不是最后一节，无法安全追加默认值")
     if "font_name" not in ui:
         text = text.rstrip("\n") + f'\n\n# AI 短视频工厂：默认字幕字体（SIL OFL 1.1 开源字体，随应用提供）\nfont_name = "{font}"\n'
+    if "voice_name" not in ui:
+        text = text.rstrip("\n") + f'\n\n# AI 短视频工厂：默认配音声音（Edge TTS 中文女声晓晓），可在界面「配音声音」里改\nvoice_name = "{voice}"\n'
     check = tomllib.loads(text)
-    assert check["ui"]["language"] == "zh" and check["ui"].get("font_name"), "生成的默认配置有误"
+    assert check["ui"]["language"] == "zh" and check["ui"].get("font_name") and check["ui"].get("voice_name"), "生成的默认配置有误"
     return text
+
+
+def with_default_voice(text: str, voice: str = DEFAULT_VOICE) -> str | None:
+    """已有配置里没有 [ui].voice_name 时，返回补上默认声音后的文本；已有（包括空值）或不是合法 TOML 时返回 None。
+
+    插在 `[ui]` 表头的下一行（TOML 里紧跟表头的键一定属于这张表，与 [ui] 在文件里的位置无关）；没有 [ui] 就在末尾新建。
+    """
+    try:
+        ui = tomllib.loads(text).get("ui")
+    except tomllib.TOMLDecodeError:
+        return None
+    if isinstance(ui, dict) and "voice_name" in ui:
+        return None
+    line = f'voice_name = "{voice}"   # AI 短视频工厂 1.0.1：默认中文配音声音'
+    m = re.search(r"^[ \t]*\[ui\][ \t]*(#[^\r\n]*)?(\r?\n|$)", text, re.M)
+    if m:
+        nl = m.group(2) or "\n"
+        new = text[:m.end()] + ("" if m.group(2) else nl) + line + nl + text[m.end():]
+    elif ui is None:
+        new = text.rstrip("\r\n") + f"\n\n[ui]\n{line}\n"
+    else:   # [ui] 写成 ui.xxx = 或内联表这类少见写法时不去改
+        return None
+    try:
+        if tomllib.loads(new).get("ui", {}).get("voice_name") != voice:
+            return None
+    except tomllib.TOMLDecodeError:
+        return None
+    return new
+
+
+def ensure_default_voice(data: Path) -> bool:
+    """配置里还没有 voice_name 时补上默认中文声音。返回是否改动了文件。"""
+    cfg = data / "config.toml"
+    try:
+        text = cfg.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    new = with_default_voice(text)
+    if new is None:
+        return False
+    tmp = data / "config.toml.tmp"
+    tmp.write_text(new, encoding="utf-8")
+    tmp.replace(cfg)
+    return True
 
 
 def ensure_config(data: Path, upstream: Path) -> bool:
@@ -104,9 +152,10 @@ def ensure_songs(data: Path) -> None:
 def prepare(data: Path, upstream: Path, bundled_fonts: Path) -> dict:
     ensure_dirs(data)
     created = ensure_config(data, upstream)
+    voice_added = False if created else ensure_default_voice(data)
     fonts = ensure_fonts(data, bundled_fonts, upstream)
     ensure_songs(data)
-    return {"config_created": created, "fonts_copied": fonts}
+    return {"config_created": created, "default_voice_added": voice_added, "fonts_copied": fonts}
 
 
 # ---------------- 外壳自己的设置（缩放等），与上游配置分开 ----------------

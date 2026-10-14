@@ -34,6 +34,8 @@ import psutil
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from svf import __version__  # noqa: E402
 STEPS = [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
 REPORT: dict = {"checks": [], "problems": []}
 
@@ -433,7 +435,7 @@ def main():
             ctx = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True)
             page = ctx.new_page()
             page.goto(base + "/")
-            expect(page.inner_text("#app-version") == "v1.0.0", "顶栏显示版本号", page.inner_text("#app-version"))
+            expect(page.inner_text("#app-version") == "v" + __version__, "顶栏显示版本号", page.inner_text("#app-version"))
             t0 = time.time()
             frame = wait_studio(page)
             ok("生成界面经反向代理载入", f"{time.time() - t0:.0f} 秒")

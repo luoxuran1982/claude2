@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 
 import psutil  # noqa: E402
 
-from svf import DEFAULT_FONT, guide, paths, procinfo, supervisor, userdata  # noqa: E402
+from svf import DEFAULT_FONT, DEFAULT_VOICE, guide, paths, procinfo, supervisor, userdata  # noqa: E402
 
 POSIX = os.name != "nt"
 
@@ -103,6 +103,31 @@ class UserDataTest(unittest.TestCase):
         self.assertEqual(res2["fonts_copied"], [])
         self.assertIn('"k"', (data / "config.toml").read_text(encoding="utf-8"))
         self.assertTrue((data / "fonts" / "my.ttf").exists())
+        # 旧配置里没有 voice_name：补上默认中文声音，其余不动；再启动不重复改
+        self.assertTrue(res2["default_voice_added"])
+        cfg = tomllib.loads((data / "config.toml").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["ui"]["voice_name"], DEFAULT_VOICE)
+        self.assertEqual(cfg["app"]["pexels_api_keys"], ["k"])
+        self.assertFalse(userdata.prepare(data, ROOT / "upstream", ROOT / "fonts")["default_voice_added"])
+
+    def test_initial_config_default_voice_is_chinese(self):
+        example = (ROOT / "upstream" / "config.example.toml").read_text(encoding="utf-8")
+        cfg = tomllib.loads(userdata.initial_config_text(example))
+        self.assertEqual(cfg["ui"]["voice_name"], "zh-CN-XiaoxiaoNeural-Female")
+        # 必须是上游声音列表里真实存在的 Edge 声音（azure-tts-v1 列表里的值）
+        voices = json.loads((ROOT / "upstream" / "app" / "services" / "data" / "azure_voices.json").read_text(encoding="utf-8"))
+        self.assertIn(DEFAULT_VOICE, {f"{v['name']}-{v['gender']}" for v in voices})
+
+    def test_with_default_voice_keeps_existing_choice(self):
+        self.assertIsNone(userdata.with_default_voice('[ui]\nvoice_name = "zu-ZA-ThandoNeural-Female"\n'))
+        self.assertIsNone(userdata.with_default_voice('[ui]\nvoice_name = ""\n'))   # 用户选过「无配音」等
+        self.assertIsNone(userdata.with_default_voice('not = toml = ['))
+        # [ui] 不在最后、带注释、CRLF 换行，都插在表头下一行
+        for text in ('[ui]\nlanguage = "zh"\n\n[app]\nx = 1\n', '[ui]  # 界面\r\nlanguage = "zh"\r\n[app]\r\nx = 1\r\n', "[app]\nx = 1\n"):
+            new = userdata.with_default_voice(text)
+            cfg = tomllib.loads(new)
+            self.assertEqual(cfg["ui"]["voice_name"], DEFAULT_VOICE, text)
+            self.assertEqual(cfg["app"]["x"], 1)
 
     def test_no_commercial_fonts_or_songs_shipped(self):
         names = [p.name for p in (ROOT / "upstream" / "resource").rglob("*") if p.is_file()]

@@ -109,6 +109,19 @@
   ];
   const ATTRS = ["placeholder", "aria-label", "title"];
 
+  // 上游的出错提示（st.error，显示在 Markdown 里，上面的规则不碰）：配音失败时只给一句英文，补上中文原因说明。
+  // 只在提示框（stAlert）里、只认这几句固定文字；替换后原句里加了标记，不会重复追加。
+  const TTS_HINT = "【可能的原因】① 日志里是 403（Invalid response status）：微软 Edge 在线配音接口改了验证方式，旧版本会被拒绝——请升级到最新版 AI 短视频工厂（1.0.1 已更新 edge-tts）；② 网络连不上 speech.platform.bing.com（公司网络、代理、防火墙或杀毒软件拦截）；③ 选的声音和文案语言不一致。也可以在「配音服务」里换别的引擎（如硅基流动、Azure TTS V2，需要 API Key），或改用「上传音频」。详见「使用指南 → 出了问题怎么办」。";
+  const ALERTS = [
+    ["failed to synthesize audio; verify the selected voice and TTS connectivity", "配音合成失败（failed to synthesize audio）。" + TTS_HINT],
+    ["配音服务未返回试听音频，请检查相关设置和应用日志。", "配音服务未返回试听音频，请检查相关设置和应用日志。" + TTS_HINT],
+  ];
+  function trAlert(text) {
+    if (text.includes("【可能的原因】")) return null;
+    for (const [from, to] of ALERTS) if (text.includes(from)) return text.replace(from, to);
+    return null;
+  }
+
   function tr(text) {
     const t = text.trim();
     if (!t || !/[A-Za-z]/.test(t)) return null;
@@ -131,6 +144,10 @@
   }
   function fixText(n) {
     const p = n.parentElement;
+    if (p && p.closest("[data-testid='stAlert'], [data-testid='stAlertContainer']")) {
+      const a = trAlert(n.nodeValue);
+      if (a !== null) { n.nodeValue = a; return; }
+    }
     // 上传框里的「Upload」按钮文字放在 Markdown 容器里，例外处理
     if (!p || (p.closest(SKIP) && !p.closest("[data-testid='stFileUploaderDropzone']"))) return;
     const out = tr(n.nodeValue);
@@ -159,6 +176,7 @@
   }
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
   window.__svfTranslate = tr;  // 供界面检查脚本使用
+  window.__svfTranslateAlert = trAlert;
 
   // ---------- 3. 外部链接交给系统浏览器 ----------
   document.addEventListener("click", e => {
