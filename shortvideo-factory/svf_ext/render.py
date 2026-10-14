@@ -194,6 +194,10 @@ def render_video(pages: list[Page], out_path: str, W: int, H: int, theme: str = 
         os.replace(tmp, out_path)
         tmp = ""
         return out_path
+    except BrokenPipeError as exc:   # FFmpeg 中途退出：把它的报错带出来
+        enc.wait()
+        err.seek(0)
+        raise RuntimeError(f"FFmpeg 编码讲解视频中途退出：{err.read().decode('utf-8', 'replace')[-800:]}") from exc
     except BaseException:
         try:
             enc.kill()

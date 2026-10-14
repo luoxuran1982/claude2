@@ -18,7 +18,7 @@ defaults:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,6 +37,8 @@ jobs:
         run: node tests/zoom.test.js
       - name: 上游自带测试（挑能离线跑的）
         run: python tests/run_upstream_tests.py
+      - name: 上游自带测试（加载外壳扩展 svf_ext，补丁 P5、P6 生效）
+        run: python tests/run_upstream_tests.py --with-ext
 
   build:
     needs: test

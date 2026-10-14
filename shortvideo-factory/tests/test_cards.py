@@ -213,6 +213,11 @@ class HintsTest(unittest.TestCase):
         self.assertNotIn("403", hint)       # 不再一律把 403 放在第一条
         hints.note("app.services.voice", "failed, error: 403, message='Invalid response status'")
         self.assertIn("升级", hints.tts_failure_hint())
+        # 新的一次尝试开始后，以前的 403 不再算这次的原因
+        hints.note("app.services.voice", "start, voice name: zh-CN-XiaoxiaoNeural, try: 1")
+        self.assertNotIn("【原因】", hints.tts_failure_hint())
+        hints.note("app.services.voice", "failed, error: Cannot connect to host speech.platform.bing.com:443")
+        self.assertIn("连不上微软配音服务器", hints.tts_failure_hint())
 
     def test_stock_error_classes(self):
         self.assertEqual(hints.classify_stock_error("pexels video search failed: error=JSONDecodeError, detail=Expecting value"), "pexels_key")
@@ -224,6 +229,8 @@ class HintsTest(unittest.TestCase):
         self.assertIn("不要手打", hints.stock_failure_hint("pixabay"))
         hints.note("app.services.material", "pexels video search failed: error=JSONDecodeError")
         self.assertIn("暂停发放新的 API 钥匙", hints.stock_failure_hint("pexels"))
+        hints.note("app.services.material", "searching videos on pixabay: term='logic gate'")
+        self.assertIn("【可能的原因】", hints.stock_failure_hint("pixabay"))   # 这一次搜索还没有出错记录
 
     def test_voice_language_mismatch(self):
         w = hints.voice_language_warning("逻辑门是数字电路的基本单元", "af-ZA-AdriNeural-Female")

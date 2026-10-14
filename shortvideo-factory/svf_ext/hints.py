@@ -33,7 +33,8 @@ def install_log_sink() -> None:
         from loguru import logger
     except ImportError:
         return
-    logger.add(_sink, level="WARNING", filter=lambda r: (r["name"] or "").startswith(WATCH_MODULES), enqueue=False,
+    # INFO 也要：配音每次尝试开头的「start, voice name」、素材每次搜索开头的「searching videos on」用来划出「这一次」的范围
+    logger.add(_sink, level="INFO", filter=lambda r: (r["name"] or "").startswith(WATCH_MODULES), enqueue=False,
                format="{message}", catch=True)
     _INSTALLED[0] = True
 
@@ -48,6 +49,23 @@ def recent(module_prefix: str, within: float = 180.0) -> list[str]:
     now = time.time()
     with _LOCK:
         return [m for t, n, m in _RECENT if n.startswith(module_prefix) and now - t <= within]
+
+
+def _latest_reason(module_prefix: str, within: float, classify, start_marker: re.Pattern, provider: str | None = None):
+    """从最近的日志往前找第一条能分类的出错信息；碰到「这一次尝试的开头」就停，免得拿以前的错误当这次的原因。"""
+    for msg in reversed(recent(module_prefix, within)):
+        if provider and provider not in msg.lower() and "_api_keys" not in msg and not start_marker.search(msg):
+            continue
+        code = classify(msg)
+        if code:
+            return code
+        if start_marker.search(msg):
+            return None
+    return None
+
+
+VOICE_START = re.compile(r"^start, voice name")
+MATERIAL_START = re.compile(r"^searching videos on")
 
 
 # ---------------------------------------------------------------- 配音
@@ -81,11 +99,7 @@ def classify_tts_error(text: str) -> str | None:
 
 def tts_failure_reason(within: float = 300.0) -> str | None:
     """最近一次配音失败的原因代码（forbidden / no_audio / network），看不出来时返回 None。"""
-    for msg in reversed(recent("app.services.voice", within)):
-        code = classify_tts_error(msg)
-        if code:
-            return code
-    return None
+    return _latest_reason("app.services.voice", within, classify_tts_error, VOICE_START)
 
 
 def tts_failure_hint(within: float = 300.0) -> str:
@@ -177,13 +191,7 @@ def classify_stock_error(message: str) -> str | None:
 
 
 def stock_failure_reason(provider: str | None = None, within: float = 900.0) -> str | None:
-    for msg in reversed(recent("app.services.material", within)):
-        if provider and provider not in msg.lower() and "_api_keys" not in msg:
-            continue
-        code = classify_stock_error(msg)
-        if code:
-            return code
-    return None
+    return _latest_reason("app.services.material", within, classify_stock_error, MATERIAL_START, provider)
 
 
 def stock_failure_hint(provider: str | None = None, within: float = 900.0) -> str:
