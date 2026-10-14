@@ -18,6 +18,8 @@ from urllib.parse import quote, unquote
 REPO = "luoxuran1982/claude2"
 SPEC_DIR = "交付规范"
 ROOT_KEY = ""
+# 同一项目在多个分支的文档一模一样（时间相同）时，优先认默认分支
+DEFAULT_REF = "origin/claude/local-api-video-gen-6ooxk8"
 
 
 def git(*args: str, binary: bool = False):
@@ -112,7 +114,7 @@ def main(dest: Path) -> None:
             if not files:
                 continue
             ts = int(git("log", "-1", "--format=%ct", ref, "--", *files).strip() or 0)
-            if key not in best or ts > best[key][0]:
+            if key not in best or ts > best[key][0] or (ts == best[key][0] and ref == DEFAULT_REF):
                 best[key] = (ts, ref, files)
 
     rows, used = [], set()
