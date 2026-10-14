@@ -1,0 +1,124 @@
+name: Qlib 量化研究台
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    paths: ["qlib-studio/**", ".github/workflows/qlib-studio.yml"]
+  workflow_dispatch:
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+defaults:
+  run:
+    working-directory: qlib-studio
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: qlib-studio/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest pymongo   # pymongo 只给上游测试用（任务管理模块会导入它）
+      - name: 编译上游 Cython 扩展
+        run: python packaging/build_ext.py
+      - name: 外壳测试（数据转换、质量检查、实验、模拟 OpenD、社区数据集、对比格式、接口）
+        run: python -m unittest discover -s tests -v
+      - name: 上游 Qlib 自带测试（离线可跑的部分；要 PyTorch / plotly 的两组除外）
+        working-directory: qlib-studio/upstream/tests
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/qlib-studio/upstream"
+          python -m pytest -q -p no:cacheprovider misc/test_index_data.py misc/test_sepdf.py misc/test_utils.py security \
+            test_structured_cov_estimator.py backtest/test_soft_topk_strategy.py backtest/test_soft_topk_strategy_cold_start.py \
+            data_mid_layer_tests/test_processor.py ops/test_special_ops.py \
+            --ignore=security/test_eval_registries.py --ignore=security/test_artifact_trust_api.py
+      - name: 网页纯函数测试
+        run: node tests/web.test.js
+      - name: 源码运行冒烟测试
+        run: python packaging/smoke.py --source
+      - name: 源码 zip
+        run: |
+          mkdir -p ../out
+          cd .. && zip -qr out/QlibStudio-source.zip qlib-studio .github/workflows/qlib-studio.yml -x 'qlib-studio/build/*' 'qlib-studio/dist/*' '*/__pycache__/*' '*.so' '*.pyd' '*.cpp'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QlibStudio-source
+          path: out/QlibStudio-source.zip
+          retention-days: 7
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-latest          # Apple Silicon（用户的 Mac 是 M4），不出 Intel 版
+            label: macOS-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: qlib-studio/requirements.txt
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pillow
+      - name: 编译上游 Cython 扩展（pyqlib 0.9.8 没有现成轮子）
+        run: python packaging/build_ext.py
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # 社区源偶尔连不上：重试几次，装不上就让这一步失败
+        run: |
+          for ($i = 1; $i -le 4; $i++) {
+            choco install nsis -y --no-progress
+            if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { exit 0 }
+            Start-Sleep -Seconds (15 * $i)
+          }
+          exit 1
+      - name: Build
+        run: python packaging/build.py
+      - name: 安装包冒烟测试（启动、接口、文档与源码、小样例数据跑通 LightGBM 实验、取消、模拟 OpenD、对比、退出后进程结束与端口释放）
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=dist/QlibStudio/QlibStudio.exe; else EXE="dist/Qlib 量化研究台.app/Contents/MacOS/QlibStudio"; fi
+          python packaging/smoke.py "$EXE"
+      - name: Check WebView2 window can be created
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QLIBSTUDIO_DATA = "$env:RUNNER_TEMP\qs-gui"
+          $p = Start-Process -FilePath dist\QlibStudio\QlibStudio.exe -PassThru
+          Start-Sleep -Seconds 30
+          $log = Get-Content "$env:QLIBSTUDIO_DATA\qlibstudio.log" -Raw
+          Write-Output $log
+          Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq $p.Id } | Select-Object ProcessId, Name | Format-Table
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if ($log -match "原生窗口启动失败") { Write-Warning "WebView2 窗口在 CI 上没起来（应用会自动改用浏览器）" }
+      - name: 列出产物
+        run: ls -la dist && du -sh dist/* || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QlibStudio-${{ matrix.label }}
+          path: |
+            qlib-studio/dist/*.exe
+            qlib-studio/dist/*.zip
+            qlib-studio/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
