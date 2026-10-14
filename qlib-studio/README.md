@@ -7,6 +7,8 @@
 
 > 仅供学习研究，不构成投资建议。
 
+**1.0.1（2026-10-14）**：「与 QuantLab 对比」能直接导入 QuantLab 1.2.0「导出实验结果 JSON」的文件（`format = "quantlab.experiment-result"`、`format_version = "1.0"`）。1.0.0 只认研究台自己的交换格式（`quant-experiment-result`），导入 QuantLab 1.2.0 的文件会报格式不对。原交换格式和「直接读 QuantLab 1.1 实验目录」照常可用。字段映射见 [04 篇「交换格式」](<docs/04 与 QuantLab 的对比.md#交换格式>)。
+
 - **阅读入口**：[docs/00 项目阅读入口](<docs/00 项目阅读入口.md>)
 - 使用指南（启停、数据、实验、报告、对比、故障、进程与内存、缩放）：[docs/01 使用指南](<docs/01 使用指南.md>)
 - 软件框架与系统架构：[docs/02 软件框架与系统架构](<docs/02 软件框架与系统架构.md>)
@@ -34,7 +36,7 @@
 | 数据 | 演示数据（模拟 A 股，和 QuantLab 同一生成器）；通达信 `vipdoc` / 导出 txt、CSV / Excel / Parquet（读取逻辑与 QuantLab 相同）；富途 / moomoo OpenD 日 K（显示历史 K 线额度、本地缓存只补缺的日期）；社区数据集 chenditc/investment_data（断点续传）。统一用上游 `dump_bin` 转成 Qlib 格式，自动做质量检查（缺失/停牌、复权提示、数据中断） |
 | 实验 | Alpha158 / Alpha360；LightGBM、XGBoost、CatBoost、线性（OLS / Ridge）；股票池；训练 / 验证 / 测试区间或滚动训练；在独立工作进程里运行，有进度，可取消。深度模型（需 PyTorch）不打包，写明为可选 |
 | 报告 | 净值与基准、超额（Qlib 口径）、回撤、IC / RankIC、五分组收益与多空、每日持仓、成交明细（真实股数、不复权价、费用）、训练过程与因子重要性 |
-| 对比 | 读取 QuantLab 导出的「实验结果交换格式」JSON，与本应用的实验并排：指标（可按共同区间重算）、净值、超额、IC、设置对照 |
+| 对比 | 读取 QuantLab 1.2.0 导出的实验结果 JSON（`quantlab.experiment-result`，1.0.1 起）或研究台「实验结果交换格式」JSON，也能直接读 QuantLab 1.1 的实验目录，与本应用的实验并排：指标（可按共同区间重算）、净值、超额、IC、设置对照 |
 | 其他 | 应用内「使用指南」（全部文档 + 源码只读查看 + 源码 zip）、运行状态（逐进程 PID / 内存）、70%–120% 缩放、版本号、退出时结束全部工作进程 |
 
 ## 从源码运行
@@ -67,7 +69,7 @@ qlibstudio/        我们写的外壳：app.py 窗口与启停、server.py 本�
                    experiment.py 实验流程（调用上游 Qlib）、compare.py 对比格式、guide.py 使用指南、procinfo.py 进程与内存、
                    data/ 数据（readers/adjust/market/demo 来自 QuantLab；convert、quality、futu、community、datasets）、web/ 界面
 upstream/          上游 Qlib v0.9.8 源码（MIT，1 处补丁）
-samples/           对比交换格式样例（随机数，不是真实结果）
+samples/           对比样例：交换格式样例（随机数）、QuantLab 1.2.0 真实导出的演示数据结果
 packaging/         build_ext.py、build.py、installer.nsi、make_icon.py、smoke.py
 tests/             test_qlibstudio.py、web.test.js
 docs/              00–04 文档、安装说明、assets/ 架构图与截图

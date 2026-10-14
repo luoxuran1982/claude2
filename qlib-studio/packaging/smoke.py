@@ -208,9 +208,15 @@ def main() -> None:
         assert imp.get("key", "").startswith("file:"), imp
         cmp_ = c.get("/api/compare?keys=" + urllib.parse.quote(f"{imp['key']},run:{run_id}"))
         assert len(cmp_["items"]) == 2, cmp_
+        # QuantLab 1.2.0 真实导出的文件（quantlab.experiment-result 1.0）也能直接导入
+        ql = c.get("/api/guide/file?path=" + urllib.parse.quote("samples/quantlab-1.2.0-export-demo.json"), raw=True)
+        imp2 = c.post("/api/compare/import", {"content": ql.decode("utf-8")})
+        assert imp2.get("app") == "QuantLab" and imp2.get("key", "").startswith("file:"), imp2
+        cmp2 = c.get("/api/compare?keys=" + urllib.parse.quote(f"{imp2['key']},run:{run_id}"))
+        assert len(cmp2["items"]) == 2 and cmp2["items"][0]["settings"]["top_k"] == 20, cmp2
         bad = c.post("/api/compare/import", {"content": json.dumps({"perf": {}, "ic": {}})})
         assert bad.get("_status") == 400 and "导出实验结果" in bad.get("error", ""), bad
-        print("  对比：样例 QuantLab 结果已导入并与实验并排；格式不对时给出中文原因")
+        print("  对比：交换格式样例和 QuantLab 1.2.0 导出文件都已导入并与实验并排；格式不对时给出中文原因")
 
         procs = c.get("/api/processes")
         print("进程：", [(p["pid"], p["role"][:16], p["mem_mib"]) for p in procs["processes"]], procs["metric"], procs["unit"])

@@ -151,7 +151,7 @@ IC 的频率也不同：QuantLab 每 5 天一个，Qlib 每天一个；均值可
    - 富途数据：先在研究台下载，再把缓存目录 `futu-cache/` 里的 CSV 导入 QuantLab（列名 date/open/high/low/close/volume/amount/factor，QuantLab 能识别 `factor` 列为复权因子）。
 2. **在 QuantLab 跑实验**：例如 LightGBM、预测 5 天、前 20 只、每 5 天调仓（默认设置）。记下实验结果页显示的样本外区间（例如 2022-05-25 ~ 2026-09-29）。
 3. **在研究台跑实验**：测试区间设成和 QuantLab 的样本外区间一样；为了接近 QuantLab 的设置，可以选「成交价：开盘价」「预测周期：5」「topk 20」「勾选滚动训练，每 63 天」。
-4. **把 QuantLab 的结果拿过来**：QuantLab 1.2.0 起用「导出实验结果」生成交换格式 JSON，在研究台「与 QuantLab 对比 → 导入 QuantLab 结果文件」；
+4. **把 QuantLab 的结果拿过来**：QuantLab 1.2.0 起用「导出实验结果 JSON」（格式 `quantlab.experiment-result`），在研究台「与 QuantLab 对比 → 导入 QuantLab 结果文件」直接导入（研究台 1.0.1 起认这个格式，见下文「交换格式」）；
    QuantLab 还是 1.1 时，在对比页展开「直接读它的实验目录」，填 QuantLab 数据目录下的 `runs/<编号>/`。
 5. **勾选两项 → 对比所选**：保持「收益指标按共同区间重新计算」打勾，表里上半部分是同一公式在共同区间上的数（可以直接比），下半部分是各自文件里的原始数（口径不同，仅供参考）；
    下面是净值、相对基准、RankIC 20 期均值三张图，最后是设置对照表。
@@ -184,8 +184,37 @@ IC 的频率也不同：QuantLab 每 5 天一个，Qlib 每天一个；均值可
 
 ## 交换格式
 
-两边交换实验结果用的 JSON 格式，由本项目定义；QuantLab 1.2.0 的「导出实验结果」按同一格式输出，研究台每次实验也会导出一份（`runs/<编号>/export.json`，报告页「导出对比文件」）。
-样例：`samples/quantlab-result-example.json`（数值是随机生成的，只演示格式）。
+「与 QuantLab 对比」页能读两种 JSON 文件，外加一种目录（1.0.1 起）：
+
+| 来源 | 怎么认 | 研究台怎么处理 | 样例 |
+| --- | --- | --- | --- |
+| 研究台交换格式（本项目定义，下面详述） | `format = "quant-experiment-result"`，`format_version = 1` | 直接读。研究台每次实验也导出一份（`runs/<编号>/export.json`，报告页「导出对比文件」） | `samples/quantlab-result-example.json`（数值随机生成，只演示格式） |
+| **QuantLab 1.2.0「导出实验结果」**（QuantLab 定义，见 QuantLab 的「03 实验结果导出格式」） | `format = "quantlab.experiment-result"`，`format_version = "1.0"`（认 1.x） | 按下面的映射表转换成交换格式再比较（`compare.from_quantlab_export`）；导入时保存原文件不改 | `samples/quantlab-1.2.0-export-demo.json`（用 QuantLab 1.2.0 的代码在演示数据 120 只 × 5 年上真实跑 LightGBM 后导出，数值是模拟数据上的结果） |
+| QuantLab 1.1 的实验目录 | 目录里有 `summary.json`、`nav.csv` | 对比页「直接读它的实验目录」，转换后存一份交换格式（`compare.from_quantlab_run_dir`） | — |
+
+说明：QuantLab 1.2.0 最终没有采用研究台的交换格式，而是定义了自己的导出格式（字段更多：区间分段、股票池、完整配置、回测假设）。研究台 1.0.0 只认交换格式，导入 QuantLab 1.2.0 的文件会报「format 应为 quant-experiment-result」；1.0.1 起两种都能直接导入。
+
+**QuantLab 1.2.0 导出格式 → 交换格式的字段映射**
+
+| QuantLab 1.2.0 | 交换格式 | 说明 |
+| --- | --- | --- |
+| `app.version`（缺省用 `run.app_version`） | `app_version`；`app` 固定 `"QuantLab"` | |
+| `run.id`、`run.name`、`run.created` | `run_id`、`name`、`created` | |
+| `dataset.title`、`start`、`end`；`dataset.demo` | `dataset.title`、`start`、`end`；`demo` 为真时 `dataset.source = "demo"`，否则写 `dataset.sources` 的来源名 | `demo: true` 是模拟数据，不要拿来下结论 |
+| `universe.n_symbols` | `dataset.n_stocks` | 整段时间出现过的股票数（动态股票池） |
+| `periods.test.start`、`end` | `period` | 样本外区间 |
+| `daily_returns.dates`、`strategy`、`benchmark` | `daily.dates`、`return`、`bench_return` | 都是扣费后的日收益（小数）。QuantLab 的 `dates` 不含回测第一天（没有前一天），所以比 `periods.test.start` 晚一天开始 |
+| `ic.dates`、`ic.ic`、`ic.rank_ic` | `ic` | QuantLab 每 `step` 个交易日一个点，开盘到开盘 |
+| `metrics.annual_volatility` | `metrics.volatility` | |
+| `metrics.information_ratio` | `metrics.info_ratio` | |
+| `metrics.turnover_annual` ÷ 244 | `metrics.turnover`（日均） | 与读 1.1 实验目录时的换算相同 |
+| `metrics` 里的 `total_return`、`annual_return`、`sharpe`、`max_drawdown`、`excess_annual_return`、`ic_mean`、`rank_ic_mean`、`icir`、`rank_icir`、`win_rate_daily` | 同名 | 原样 |
+| `model.types`、`horizon`、`n_features`；`config.backtest`（`top_k`、`rebalance_days`、`buffer`、`commission`、`min_commission`、`stamp_tax`、`slippage`）；`universe.rules`、`universe.benchmark`；`walk`；`label` | `settings`（`models`、`horizon`、`n_features`、`top_k`、`rebalance`、`costs`、`pool`、`benchmark`、`rolling`、`label` 等，转成中文短句） | 只用于「设置对照」表 |
+| `periods.folds`、`assumptions`、原始 `metrics`（含 sortino、beta、alpha、交易笔数等） | `quantlab` 字段原样保留 | 不参与比较 |
+
+`format_version` 主版本不是 1（如 `"2.0"`）时拒绝并提示升级研究台；缺 `daily_returns` 或 `metrics` 时提示文件不完整。用样例实测：日收益复利回去等于 QuantLab 的累计收益，研究台在全区间重算的夏普、最大回撤与 QuantLab 自己算的一致（`tests/test_qlibstudio.py` 的 `test_quantlab_1_2_export`）。
+
+**研究台交换格式**（本项目定义）：
 
 ```json
 {

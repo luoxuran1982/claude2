@@ -232,8 +232,8 @@
 <section class="view" data-view="compare">
   <div class="card">
     <div class="card-head"><div><h2>与 QuantLab 对比</h2>
-      <p class="muted">读取 QuantLab 导出的「实验结果交换格式」JSON（QuantLab 1.2.0 起的「导出实验结果」），和本应用的实验并排比较：主要指标、净值、超额、IC。
-        格式说明见「使用指南 → 04 与 QuantLab 的对比 → 交换格式」，也可以下载 <a href="/api/guide/file?path=samples%2Fquantlab-result-example.json" target="_blank" rel="noreferrer">样例文件</a>。</p></div></div>
+      <p class="muted">读取 QuantLab 1.2.0 起「导出实验结果 JSON」生成的文件（quantlab.experiment-result），或研究台的「实验结果交换格式」JSON，和本应用的实验并排比较：主要指标、净值、超额、IC。
+        格式说明见「使用指南 → 04 与 QuantLab 的对比 → 交换格式」，也可以下载样例：<a href="/api/guide/file?path=samples%2Fquantlab-1.2.0-export-demo.json" target="_blank" rel="noreferrer">QuantLab 1.2.0 导出文件</a>、<a href="/api/guide/file?path=samples%2Fquantlab-result-example.json" target="_blank" rel="noreferrer">交换格式</a>。</p></div></div>
     <div class="actions">
       <label class="btn" for="cmp-file">导入 QuantLab 结果文件…</label><input type="file" id="cmp-file" accept=".json,application/json" multiple hidden>
       <label class="switch"><input type="checkbox" id="cmp-common" checked> 收益指标按共同区间重新计算</label>
