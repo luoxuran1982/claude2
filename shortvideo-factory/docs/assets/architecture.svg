@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="PingFang SC, Microsoft YaHei, Noto Sans SC, sans-serif" font-size="14">
-  <title>AI 短视频工厂 1.0.0 系统架构</title>
+  <title>AI 短视频工厂 1.0.1 系统架构</title>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#475467"/></marker>
   </defs>
   <rect width="1000" height="640" fill="#ffffff"/>
-  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.0：进程与数据流</text>
+  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.1：进程与数据流</text>
 
   <!-- 启动器 -->
   <rect x="30" y="55" width="420" height="300" rx="12" fill="#eef2ff" stroke="#1f3a8a" stroke-width="2"/>

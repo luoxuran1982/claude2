@@ -113,6 +113,16 @@ def check_runtime(py: Path, payload: Path, tmp: Path):
     if r.returncode != 0:
         fail("随包 Python 导入上游模块失败")
     ok("随包 Python 能导入上游主要模块，FFmpeg 可执行")
+    # 随包 edge-tts 能走通上游配音调用（通信层换成假服务端，不连微软；真实配音要在用户电脑上验收）
+    r = subprocess.run([str(py), str(ROOT / "tests" / "edge_tts_compat_check.py")], env=env, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", timeout=300, cwd=str(payload / "upstream"))
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT ")), "")
+    print(line or (r.stdout[-1500:] + r.stderr[-3000:]))
+    res = json.loads(line[7:]) if line else {}
+    if not (res.get("ok") and res.get("cues") == ["你好", "世界"] and str(res.get("gec_version", "")).startswith("2-")
+            and res.get("refused_returns_none")):
+        fail("随包 edge-tts 走不通上游配音调用")
+    ok(f"随包 edge-tts {res['edge_tts']} 走通上游配音调用（假服务端，Sec-MS-GEC v2）")
 
 
 def start(exe: Path, data: Path, *extra) -> subprocess.Popen:
@@ -332,7 +342,8 @@ def main():
     cfg = (data / "config.toml").read_text(encoding="utf-8")
     assert 'language = "zh"' in cfg and "NotoSansSC-Bold.ttf" in cfg, "首启配置没有设成中文/开源字体"
     assert (data / "fonts" / "NotoSansSC-Bold.ttf").exists()
-    ok("首启：用户数据目录里生成了中文配置，复制了开源字体")
+    assert 'voice_name = "zh-CN-XiaoxiaoNeural-Female"' in cfg, "首启配置没有设默认中文配音声音"
+    ok("首启：用户数据目录里生成了中文配置（含默认中文配音声音），复制了开源字体")
     check_service(base, rec, st)
     quit_and_verify(base, rec, proc, data)
 

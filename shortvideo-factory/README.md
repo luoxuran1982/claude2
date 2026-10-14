@@ -2,15 +2,17 @@
 
 把开源项目 [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo)（MIT 许可，GitHub 约 13 万星）包成可以双击安装的桌面应用：**给一个主题 → 大模型写文案和搜索关键词 → 从 Pexels / Pixabay 等免费素材站下载视频片段拼接 → 配音 + 字幕 + 背景音乐 → 合成竖屏或横屏短视频**。
 
-当前版本 **1.0.0**，内置上游 MoneyPrinterTurbo 1.3.8（commit `bbe7eb9`，2026-10-10）。macOS（Apple 芯片）和 Windows（x64）各有安装包，打开后是独立窗口。做这个项目的目的，是和本仓库根目录的「AI 知识视频工坊」（`studio/`）对比两种做视频的思路，见 [04 与 AI 知识视频工坊的对比](<docs/04 与AI知识视频工坊的对比.md>)。
+当前版本 **1.0.1**，内置上游 MoneyPrinterTurbo 1.3.8（commit `bbe7eb9`，2026-10-10）。macOS（Apple 芯片）和 Windows（x64）各有安装包，打开后是独立窗口。做这个项目的目的，是和本仓库根目录的「AI 知识视频工坊」（`studio/`）对比两种做视频的思路，见 [04 与 AI 知识视频工坊的对比](<docs/04 与AI知识视频工坊的对比.md>)。
+
+**1.0.1（2026-10-14）修的问题**：1.0.0 在 Windows 上配音全部失败（「failed to synthesize audio」，日志里 `403, message='Invalid response status'`，换中文声音也一样）。原因是微软 Edge 在线配音接口改了验证方式，随包的 edge-tts 7.2.7 被拒。1.0.1 把 edge-tts 升到 7.3.1（Sec-MS-GEC v2 令牌），默认配音声音改成中文「晓晓」（zh-CN-XiaoxiaoNeural），配音失败时界面提示补一段中文原因说明。装 1.0.1 覆盖旧版即可，设置和视频都保留。真实配音待用户在电脑上验收（容器里连不上微软服务器）。
 
 ## 安装与打开
 
-安装包在仓库的 [Releases 页面](https://github.com/luoxuran1982/claude2/releases)（标签 `shortvideo-factory-v1.0.0`）。
+安装包在仓库的 [Releases 页面](https://github.com/luoxuran1982/claude2/releases)（标签 `shortvideo-factory-v1.0.1`）。
 
 | | macOS（Apple 芯片） | Windows（x64） |
 | --- | --- | --- |
-| 下载 | `ShortVideoFactory-1.0.0-macOS-arm64.dmg` | `ShortVideoFactory-Setup-1.0.0-x64.exe`（另有免安装 `ShortVideoFactory-1.0.0-windows-x64.zip`） |
+| 下载 | `ShortVideoFactory-1.0.1-macOS-arm64.dmg` | `ShortVideoFactory-Setup-1.0.1-x64.exe`（另有免安装 `ShortVideoFactory-1.0.1-windows-x64.zip`） |
 | 安装 | 双击 `.dmg`，把「AI 短视频工厂.app」拖进「应用程序」 | 双击 Setup.exe，装到 `%LOCALAPPDATA%\Programs\ShortVideoFactory\`，不需要管理员权限，开始菜单和桌面有快捷方式 |
 | 首次打开 | 没有 Apple 签名：在「应用程序」里右键 →「打开」→「打开」；仍被拦就到「系统设置 → 隐私与安全性」点「仍要打开」 | 没有代码签名：SmartScreen 提示时点「更多信息 → 仍要运行」 |
 | 退出 | ⌘Q、菜单「退出」、程序坞右键「退出」、点红色按钮关窗口、顶栏「退出」 | 点 ×、Alt+F4、任务栏右键「关闭窗口」、顶栏「退出」 |
