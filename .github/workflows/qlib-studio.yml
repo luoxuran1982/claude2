@@ -31,7 +31,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest pymongo   # pymongo 只给上游测试用（任务管理模块会导入它）
       - name: 编译上游 Cython 扩展
         run: python packaging/build_ext.py
       - name: 外壳测试（数据转换、质量检查、实验、模拟 OpenD、社区数据集、对比格式、接口）
