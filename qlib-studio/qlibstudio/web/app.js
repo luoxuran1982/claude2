@@ -594,7 +594,7 @@
         return { name: `${x.app} · ${x.name}`, type: "line", data: icDates.map(d => m.has(d) ? m.get(d) : null), showSymbol: false, connectNulls: true, color: PALETTE[i % PALETTE.length] }; }) });
     const skeys = [...new Set(items.flatMap(x => Object.keys(x.settings || {})))];
     const SK = { factors: "因子", n_features: "因子数", models: "模型", horizon: "预测周期", top_k: "持仓数", rebalance: "调仓", deal_price: "成交价", costs: "费用",
-      limit: "涨跌停", benchmark: "基准", pool: "股票池", rolling: "滚动训练" };
+      limit: "涨跌停", benchmark: "基准", pool: "股票池", rolling: "滚动训练", label: "预测目标" };
     $("cmp-settings").innerHTML = `<table class="data small"><thead>${head.replace("指标", "设置")}</thead><tbody>${skeys.map(k => `<tr><td>${esc(SK[k] || k)}</td>${items.map(x => {
       const v = (x.settings || {})[k]; return `<td>${esc(typeof v === "object" && v !== null ? JSON.stringify(v) : v ?? "—")}</td>`; }).join("")}</tr>`).join("")}</tbody></table>`;
     $("cmp-result").scrollIntoView({ behavior: "smooth" });

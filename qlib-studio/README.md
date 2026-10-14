@@ -1,4 +1,4 @@
-# Qlib 量化研究台 1.0.0（QlibStudio）
+# Qlib 量化研究台 1.0.1（QlibStudio）
 
 微软开源量化投资平台 **Qlib**（<https://github.com/microsoft/qlib>，MIT，约 4.9 万星）的全中文桌面版。Qlib 本身是 Python 库加命令行，没有界面；
 研究台把它的 Alpha158 / Alpha360 因子、LightGBM / XGBoost / CatBoost / 线性模型、滚动训练和组合回测装进一个 macOS / Windows 应用窗口，
@@ -20,9 +20,9 @@
 
 | 文件 | 平台 |
 | --- | --- |
-| `QlibStudio-1.0.0-macOS-arm64.dmg` | macOS（Apple 芯片），拖进「应用程序」，首次右键 →「打开」 |
-| `QlibStudio-Setup-1.0.0-x64.exe` | Windows x64 安装程序，装到 `%LOCALAPPDATA%\Programs\QlibStudio\`，不需要管理员权限 |
-| `QlibStudio-1.0.0-windows-x64.zip` | Windows 免安装版 |
+| `QlibStudio-1.0.1-macOS-arm64.dmg` | macOS（Apple 芯片），拖进「应用程序」，首次右键 →「打开」 |
+| `QlibStudio-Setup-1.0.1-x64.exe` | Windows x64 安装程序，装到 `%LOCALAPPDATA%\Programs\QlibStudio\`，不需要管理员权限 |
+| `QlibStudio-1.0.1-windows-x64.zip` | Windows 免安装版 |
 | `QlibStudio-source.zip` | 完整源码（应用内「使用指南」也能下载） |
 
 数据集、富途缓存、实验结果和设置在 macOS `~/Library/Application Support/QlibStudio/`、Windows `%LOCALAPPDATA%\QlibStudio\`，换新版本和卸载都保留。

@@ -1,9 +1,13 @@
-"""与 QuantLab 对比：读取「实验结果交换格式」JSON，并排比较。
+"""与 QuantLab 对比：读取实验结果 JSON，并排比较。
 
-交换格式（format = "quant-experiment-result"，format_version = 1）由 Qlib 量化研究台定义，
-QuantLab 1.2.0 的「导出实验结果」按同一格式输出；本应用每次实验也导出一份（runs/<编号>/export.json），
-所以两边的结果可以放在一起比。完整字段说明见 docs/04 与 QuantLab 的对比.md「交换格式」一节，
-样例见 samples/quantlab-result-example.json。
+能读三种来源，进来后都转成研究台的「交换格式」（下面这个结构）再比较：
+1. 研究台交换格式（format = "quant-experiment-result"，format_version = 1）：本应用每次实验都导出一份
+   （runs/<编号>/export.json），样例 samples/quantlab-result-example.json。
+2. QuantLab 1.2.0「导出实验结果」的文件（format = "quantlab.experiment-result"，format_version = "1.0"，
+   格式定义在 QuantLab 的 docs/03 实验结果导出格式.md）：由 from_quantlab_export() 按字段映射转换，
+   样例 samples/quantlab-1.2.0-export-demo.json（用 QuantLab 1.2.0 的代码在演示数据上真实跑出来的）。
+3. QuantLab 1.1 的实验目录（summary.json + nav.csv + config.json）：from_quantlab_run_dir()。
+完整字段说明见 docs/04 与 QuantLab 的对比.md「交换格式」一节。
 
     {
       "format": "quant-experiment-result", "format_version": 1,
@@ -33,6 +37,8 @@ import pandas as pd
 
 FORMAT = "quant-experiment-result"
 VERSION = 1
+QL_FORMAT = "quantlab.experiment-result"   # QuantLab 1.2.0 起「导出实验结果」的格式
+QL_MAJOR = 1                               # 认得的 QuantLab 格式主版本（format_version "1.x"）
 METRIC_LABELS = {
     "total_return": ("累计收益", "pct"), "annual_return": ("年化收益（复利）", "pct"), "volatility": ("年化波动", "pct"),
     "sharpe": ("夏普比率", "num"), "max_drawdown": ("最大回撤", "pct"), "excess_annual_return": ("年化超额收益", "pct"),
@@ -140,15 +146,112 @@ def from_quantlab_run_dir(run_dir) -> dict:
     })
 
 
+def _ql_major(v) -> int:
+    try:
+        return int(str(v).split(".")[0])
+    except ValueError:
+        return 0
+
+
+def _g(x):
+    return f"{x:g}" if isinstance(x, (int, float)) else x
+
+
+def _pct(x):
+    return f"{x * 100:g}%" if isinstance(x, (int, float)) else x
+
+
+_BOARDS = {"sh_main": "沪市主板", "sz_main": "深市主板", "chinext": "创业板", "star": "科创板", "bj": "北交所"}
+
+
+def _pool_text(rules):
+    if not isinstance(rules, dict):
+        return rules
+    parts = ["+".join(_BOARDS.get(b, b) for b in rules.get("boards") or []) or None]
+    if rules.get("min_listed_days"):
+        parts.append(f"上市满 {rules['min_listed_days']} 天")
+    if rules.get("min_amount"):
+        parts.append(f"20 日均成交额 ≥ {rules['min_amount'] / 1e4:g} 万")
+    if rules.get("min_price"):
+        parts.append(f"股价 ≥ {rules['min_price']:g} 元")
+    if rules.get("exclude_st"):
+        parts.append("排除 ST")
+    return "，".join(p for p in parts if p) or None
+
+
+def from_quantlab_export(doc: dict) -> dict:
+    """QuantLab 1.2.0 导出的实验结果（format = "quantlab.experiment-result"）→ 研究台交换格式。
+
+    字段对应（左边 QuantLab，右边研究台）：
+    app.name / app.version → app（固定 "QuantLab"）/ app_version；run.id / name / created → run_id / name / created；
+    dataset.title / demo / start / end → dataset（demo 为真时 source = "demo"），universe.n_symbols → dataset.n_stocks；
+    periods.test.start / end → period；daily_returns.dates / strategy / benchmark → daily.dates / return / bench_return；
+    ic.dates / ic / rank_ic → ic；metrics.annual_volatility → volatility，information_ratio → info_ratio，
+    turnover_annual ÷ 244 → turnover（日均），其余同名指标原样；config 里的模型、因子、标签、滚动训练、回测费用 → settings。
+    QuantLab 多出来的信息（periods.folds、universe.symbols、assumptions 等）放在 quantlab 字段里原样保留，不参与比较。"""
+    if _ql_major(doc.get("format_version")) != QL_MAJOR:
+        raise FormatError(f"QuantLab 导出格式版本 {doc.get('format_version')!r} 本应用不认识（支持 1.x），请升级 Qlib 量化研究台")
+    for key in ("daily_returns", "metrics"):
+        if not isinstance(doc.get(key), dict):
+            raise FormatError(f"QuantLab 导出文件缺少 {key}，可能不完整")
+    app, run, ds = doc.get("app") or {}, doc.get("run") or {}, doc.get("dataset") or {}
+    cfg, model, uni = doc.get("config") or {}, doc.get("model") or {}, doc.get("universe") or {}
+    test = (doc.get("periods") or {}).get("test") or {}
+    m, dr, ic = doc["metrics"], doc["daily_returns"], doc.get("ic") or {}
+    bt, walk, label = cfg.get("backtest") or {}, model.get("walk") or cfg.get("walk") or {}, model.get("label") or cfg.get("label") or {}
+    feats = model.get("features") or (cfg.get("features") or {}).get("resolved") or []
+    n_feat = model.get("n_features") or (len(feats) or None)
+    turn = m.get("turnover_annual")
+    price = {"open": "开盘价", "close": "收盘价"}.get(label.get("price"), label.get("price"))
+    return {
+        "format": FORMAT, "format_version": VERSION, "app": "QuantLab", "app_version": app.get("version") or run.get("app_version"),
+        "engine": "QuantLab 自研（walk-forward + A 股规则回测）",
+        "source_format": f"{QL_FORMAT} {doc.get('format_version')}",
+        "run_id": run.get("id"), "name": run.get("name"), "created": run.get("created"),
+        "dataset": {"title": ds.get("title"), "source": "demo" if ds.get("demo") else ("、".join(ds["sources"]) if ds.get("sources") else None),
+                    "n_stocks": uni.get("n_symbols"), "start": ds.get("start"), "end": ds.get("end")},
+        "period": {"start": test.get("start"), "end": test.get("end")},
+        "settings": {
+            "factors": f"QuantLab 因子 {n_feat} 个" if n_feat else None, "n_features": n_feat,
+            "models": model.get("types") or (cfg.get("model") or {}).get("types"), "horizon": model.get("horizon") or label.get("horizon"),
+            "top_k": bt.get("top_k"),
+            "rebalance": f"每 {bt.get('rebalance_days')} 个交易日，持仓缓冲 {bt.get('buffer')} 倍" if bt.get("rebalance_days") else None,
+            "deal_price": "T+1 开盘价",
+            "costs": (f"佣金 {_pct(bt.get('commission'))}（最低 {_g(bt.get('min_commission'))} 元）、印花税 {_pct(bt.get('stamp_tax'))}、"
+                      f"滑点 {_pct(bt.get('slippage'))}") if bt else None,
+            "limit": "一字涨停买不进、一字跌停卖不出",
+            "benchmark": uni.get("benchmark"),
+            "pool": _pool_text(uni.get("rules")),
+            "rolling": (f"训练窗口 {walk.get('train_days')} 个交易日，每 {walk.get('retrain_days')} 个交易日重训"
+                        if walk.get("train_days") else None),
+            "label": (f"未来 {label.get('horizon')} 日收益（{price}到{price}"
+                      + ("，相对市场超额" if label.get("excess") else "") + "）") if label else None,
+        },
+        "metrics": {"total_return": m.get("total_return"), "annual_return": m.get("annual_return"),
+                    "volatility": m.get("annual_volatility"), "sharpe": m.get("sharpe"), "max_drawdown": m.get("max_drawdown"),
+                    "excess_annual_return": m.get("excess_annual_return"), "info_ratio": m.get("information_ratio"),
+                    "ic_mean": m.get("ic_mean"), "rank_ic_mean": m.get("rank_ic_mean"), "icir": m.get("icir"),
+                    "rank_icir": m.get("rank_icir"), "turnover": turn / 244 if isinstance(turn, (int, float)) else None,
+                    "win_rate_daily": m.get("win_rate_daily")},
+        "daily": {"dates": dr.get("dates") or [], "return": dr.get("strategy") or [], "bench_return": dr.get("benchmark") or []},
+        "ic": {"dates": ic.get("dates") or [], "ic": ic.get("ic") or [], "rank_ic": ic.get("rank_ic") or []},
+        "quantlab": {"exported_at": doc.get("exported_at"), "app_name": app.get("name"), "dataset": ds,
+                     "periods": doc.get("periods"), "n_symbols": uni.get("n_symbols"), "assumptions": doc.get("assumptions"),
+                     "metrics": m},
+    }
+
+
 def validate(obj) -> dict:
-    """检查交换格式，返回规范化后的对象；不合格抛 FormatError（中文原因）。"""
+    """检查交换格式，返回规范化后的对象；不合格抛 FormatError（中文原因）。QuantLab 1.2 的导出文件先转换再检查。"""
     if not isinstance(obj, dict):
         raise FormatError("文件内容不是 JSON 对象")
+    if obj.get("format") == QL_FORMAT:
+        obj = from_quantlab_export(obj)
     if obj.get("format") != FORMAT:
         hint = ""
         if "perf" in obj and "ic" in obj:
             hint = "（这像是 QuantLab 内部的 summary.json；请在 QuantLab 1.2.0 以上用「导出实验结果」生成交换格式文件）"
-        raise FormatError(f"format 应为 \"{FORMAT}\"，实际是 {obj.get('format')!r}{hint}")
+        raise FormatError(f"format 应为 \"{FORMAT}\" 或 \"{QL_FORMAT}\"，实际是 {obj.get('format')!r}{hint}")
     if int(obj.get("format_version") or 0) > VERSION:
         raise FormatError(f"格式版本 {obj.get('format_version')} 比本应用支持的 {VERSION} 新，请升级 Qlib 量化研究台")
     daily = obj.get("daily") or {}

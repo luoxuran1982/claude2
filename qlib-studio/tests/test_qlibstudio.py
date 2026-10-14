@@ -363,6 +363,46 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(len(a["curve"]["dates"]), len(b["curve"]["dates"]))
         self.assertAlmostEqual(a["metrics_common"]["total_return"], b["metrics_common"]["total_return"], places=9)
 
+    def test_quantlab_1_2_export(self):
+        """QuantLab 1.2.0「导出实验结果」的真实文件（format = quantlab.experiment-result）→ 交换格式。"""
+        path = ROOT / "samples" / "quantlab-1.2.0-export-demo.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual((raw["format"], raw["format_version"], raw["app"]["version"]),
+                         ("quantlab.experiment-result", "1.0", "1.2.0"))
+        x = compare.load(path)
+        self.assertEqual(x["format"], compare.FORMAT)
+        self.assertEqual((x["app"], x["app_version"], x["run_id"], x["name"]),
+                         ("QuantLab", "1.2.0", raw["run"]["id"], raw["run"]["name"]))
+        self.assertEqual(x["period"], {"start": raw["periods"]["test"]["start"], "end": raw["periods"]["test"]["end"]})
+        self.assertEqual(x["daily"]["dates"], raw["daily_returns"]["dates"])
+        self.assertEqual(x["daily"]["return"], raw["daily_returns"]["strategy"])
+        self.assertEqual(x["daily"]["bench_return"], raw["daily_returns"]["benchmark"])
+        self.assertEqual(x["ic"]["rank_ic"], raw["ic"]["rank_ic"])
+        m, rm = x["metrics"], raw["metrics"]
+        self.assertEqual(m["volatility"], rm["annual_volatility"])
+        self.assertEqual(m["info_ratio"], rm["information_ratio"])
+        self.assertAlmostEqual(m["turnover"], rm["turnover_annual"] / 244)
+        for k in ("annual_return", "total_return", "sharpe", "max_drawdown", "excess_annual_return", "ic_mean", "rank_ic_mean",
+                  "icir", "rank_icir", "win_rate_daily"):
+            self.assertEqual(m[k], rm[k], k)
+        self.assertEqual(x["dataset"]["source"], "demo")
+        self.assertEqual(x["dataset"]["n_stocks"], raw["universe"]["n_symbols"])
+        st = x["settings"]
+        self.assertEqual((st["models"], st["horizon"], st["top_k"], st["n_features"]), (["lgbm"], 5, 20, 73))
+        self.assertIn("创业板", st["pool"])
+        # 日收益复利回去 = QuantLab 的累计收益；在本应用里重算的指标与 QuantLab 自己算的一致
+        self.assertAlmostEqual(float(np.prod([1 + v for v in x["daily"]["return"]]) - 1), rm["total_return"], places=3)
+        res = compare.side_by_side([x, compare.load(ROOT / "samples" / "quantlab-result-example.json")], common_only=False)
+        self.assertAlmostEqual(res["items"][0]["metrics_common"]["max_drawdown"], rm["max_drawdown"], places=3)
+        self.assertAlmostEqual(res["items"][0]["metrics_common"]["sharpe"], rm["sharpe"], places=2)
+        # 原格式和直接读 QuantLab 实验目录两条路照常可用（见 test_sample_and_side_by_side、test_quantlab_run_dir）
+        bad = dict(raw, format_version="2.0")
+        with self.assertRaises(compare.FormatError) as e:
+            compare.validate(bad)
+        self.assertIn("升级", str(e.exception))
+        with self.assertRaises(compare.FormatError):
+            compare.validate({"format": "quantlab.experiment-result", "format_version": "1.0"})
+
     def test_quantlab_run_dir(self):
         """QuantLab 1.1 的实验目录（summary.json + nav.csv + config.json）→ 交换格式。"""
         d = Path(tempfile.mkdtemp(prefix="ql-run-"))
@@ -482,6 +522,15 @@ class ServerTest(TempDir):
         self.assertEqual(items["items"][0]["app"], "QuantLab")
         s, res = self.req("GET", "/api/compare?keys=" + r["key"])
         self.assertEqual(len(res["items"]), 1)
+        # QuantLab 1.2.0 导出的原始文件也能导入，并与上面那份并排
+        ql = (ROOT / "samples" / "quantlab-1.2.0-export-demo.json").read_text(encoding="utf-8")
+        s, r2 = self.req("POST", "/api/compare/import", {"content": ql})
+        self.assertEqual(s, 200, r2)
+        self.assertEqual((r2["app"], r2["name"]), ("QuantLab", "演示数据 LightGBM 样例"))
+        s, res = self.req("GET", "/api/compare?keys=" + r["key"] + "," + r2["key"])
+        self.assertEqual(s, 200, res)
+        self.assertEqual(len(res["items"]), 2)
+        self.assertEqual(res["items"][1]["settings"]["top_k"], 20)
 
 
 class ProcinfoTest(unittest.TestCase):

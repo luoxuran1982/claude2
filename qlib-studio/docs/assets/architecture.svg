@@ -15,7 +15,7 @@
     </style>
   </defs>
   <rect width="1000" height="640" fill="#ffffff"/>
-  <text x="20" y="30" class="t" font-size="18">Qlib 量化研究台 1.0.0 · 系统架构</text>
+  <text x="20" y="30" class="t" font-size="18">Qlib 量化研究台 1.0.1 · 系统架构</text>
 
   <!-- 主进程 -->
   <rect x="20" y="50" width="430" height="300" rx="12" class="main"/>
