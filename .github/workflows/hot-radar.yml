@@ -82,14 +82,19 @@ jobs:
           pip install -r requirements.txt -c constraints.txt pyinstaller pillow
       - name: Install NSIS
         if: runner.os == 'Windows'
+        # Chocolatey 偶尔宕机（503/504），所以：已有就跳过 → choco 重试 3 次 → 官方安装包兜底
         shell: pwsh
-        # 社区源偶尔连不上：重试几次，装不上就让这一步失败
         run: |
-          for ($i = 1; $i -le 4; $i++) {
+          $m = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (Test-Path $m) { exit 0 }
+          for ($i = 1; $i -le 3; $i++) {
             choco install nsis -y --no-progress
-            if (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") { exit 0 }
+            if (Test-Path $m) { exit 0 }
             Start-Sleep -Seconds (15 * $i)
           }
+          Invoke-WebRequest "https://sourceforge.net/projects/nsis/files/NSIS%203/3.10/nsis-3.10-setup.exe/download" -OutFile "$env:RUNNER_TEMP\nsis-setup.exe" -UserAgent "Wget" -MaximumRedirection 10
+          Start-Process "$env:RUNNER_TEMP\nsis-setup.exe" -ArgumentList "/S" -Wait
+          if (Test-Path $m) { exit 0 }
           exit 1
       - name: Build
         run: python packaging/build.py
