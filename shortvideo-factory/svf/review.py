@@ -181,7 +181,8 @@ def annotate(rows: list[dict]) -> list[dict]:
     calls.sort(key=lambda c: float(c.get("ts") or 0))
     out = []
     for k, c in enumerate(calls, 1):
-        earlier = [(j, str(p.get("output") or "")) for j, p in enumerate(calls[:k - 1], 1) if p.get("ok")]
+        earlier = [(j, str(p.get("output") or "")) for j, p in enumerate(calls[:k - 1], 1)
+                   if p.get("ok") and not any(str(n).startswith("没有采用") for n in p.get("use_notes") or [])]
         msgs = []
         sources: dict[int, int] = {}
         for i, m in enumerate(c.get("messages") or []):

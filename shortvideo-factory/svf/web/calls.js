@@ -11,7 +11,7 @@
 window.SVFCalls = function (ctx) {
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const LONG = 1500;   // 超过这么多字的文本默认收起
+  const LONG = 6000;   // 超过这么多字的文本默认收起（收起的也能点开；展开后框内超过约 34 行会出现滚动条）
   let tasks = [], taskId = null, data = null;
 
   $("lc-legend").innerHTML = `<b>颜色说明</b>
@@ -59,7 +59,8 @@ window.SVFCalls = function (ctx) {
       if (r.from != null && r.from !== lastFrom) tag += `<span class="tag from">来自 #${r.from} 的输出</span>`;
       if ((r.k === "var" || r.k === "prog") && r.n) tag += `<span class="tag">${esc(r.n)}</span>`;
       lastFrom = r.from;
-      return `<span class="run ${esc(r.k)}${r.from != null ? " from" : ""}" title="${r.k === "var" ? "程序填进去的变量：" + esc(r.n) : r.k === "prog" ? "程序加的：" + esc(r.n) : r.k === "tpl" ? "固定模板" : ""}${r.from != null ? "（来自第 " + r.from + " 次调用的输出）" : ""}">${tag}${esc(r.t)}</span>`;
+      const lead = tag ? (r.t.match(/^\s*/) || [""])[0] : "";   // 标签放在开头的换行之后，紧挨着文字
+      return `${esc(lead)}<span class="run ${esc(r.k)}${r.from != null ? " from" : ""}" title="${r.k === "var" ? "程序填进去的变量：" + esc(r.n) : r.k === "prog" ? "程序加的：" + esc(r.n) : r.k === "tpl" ? "固定模板" : ""}${r.from != null ? "（来自第 " + r.from + " 次调用的输出）" : ""}">${tag}${esc(r.t.slice(lead.length))}</span>`;
     }).join("");
   }
 

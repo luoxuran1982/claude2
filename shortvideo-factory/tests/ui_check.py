@@ -15,6 +15,9 @@
 5c. 1.0.3（--generate 时）：目标时长控件；界面上「生成文案」（假的 OpenAI 兼容接口）→ 连点三次「生成视频」只起一个任务、按钮变灰「生成中…」；
    日志解读、大模型调用记录（含完整提示词、token，没有钥匙）、原始日志行号；任务管理里取消 → 「已取消」→ 能删除；
    「打开目录」失败时显示完整路径和「复制路径」（容器里没有 xdg-open，正好走失败分支）。截图写进 docs/assets。
+5d. 1.1.0（--generate 时）：「知识讲解卡片（AI 导演）」+ 无配音出片（假大模型返回导演 JSON）；生成页的「审片 / 分镜」「模型调用」链接
+   跳到外壳顶层标签页；审片网格（缩略图、序号和版式名、口播文字，点一格视频跳到那一页）、分镜详情（大图、结构化数据）；
+   模型调用页（谁说的、模板/变量着色、调用链、思考过程、用途、没有钥匙）；任务管理里的入口（补丁 P9）；字数控制方式三档。
 6. 扫一遍 Streamlit 页面里剩下的英文。
 7. 点「退出」：启动器、后台全部结束，端口释放。
 结果写到 <截图目录>/ui_check_report.json。
@@ -417,12 +420,23 @@ def run_cards_ui(page, shots: Path, data: Path):
     sel = frame.locator(".mpt-grouped-select select").first
     groups = sel.evaluate("s => [...s.querySelectorAll('optgroup')].map(g => [g.label, [...g.querySelectorAll('option')].map(o => o.value)])")
     prog = dict((g[0], g[1]) for g in groups).get("程序生成", [])
-    expect(prog == ["knowledge_cards", "hybrid_pixabay", "hybrid_pexels"], "视频来源下拉单列「程序生成」组（知识讲解卡片、两种混合）", str(groups))
+    expect(prog == ["knowledge_cards", "knowledge_cards_ai", "knowledge_cards_illus", "hybrid_pixabay", "hybrid_pexels"],
+           "视频来源下拉单列「程序生成」组（规则切分、AI 导演、卡片 + AI 插图、两种混合）", str(groups))
     sel.select_option(value="knowledge_cards")
     frame.wait_for_timeout(3000)
     body = frame.inner_text("body")
-    expect("卡片配色" in body and "不需要素材钥匙" in body, "选「知识讲解卡片」后显示说明和「卡片配色」")
+    expect("卡片主题" in body and "规则切分" in body, "选「知识讲解卡片（规则切分）」后显示原理说明和「卡片主题」")
+    sel.select_option(value="knowledge_cards_illus")
+    frame.wait_for_timeout(3000)
+    body = frame.inner_text("body")
+    expect("需要先在 设置 → 素材来源设置 里配置文生图" in body, "选「卡片 + AI 插图」但没配置文生图时提示去设置里配置")
+    sel.select_option(value="knowledge_cards_ai")
+    frame.wait_for_timeout(3000)
+    body = frame.inner_text("body")
+    expect("AI 导演" in body and "工坊深色" in body, "选「AI 导演」后显示原理说明，主题默认「工坊深色」")
     page.screenshot(path=str(shots / "cards-source-100.png"))
+    sel.select_option(value="knowledge_cards")
+    frame.wait_for_timeout(2500)
     frame.locator("textarea[aria-label*='视频主题']").first.fill("逻辑门是怎样工作的")
     frame.locator("textarea[aria-label*='视频主题']").first.press("Tab")
     frame.wait_for_timeout(1500)
@@ -499,6 +513,9 @@ UI_SCRIPT = ("逻辑门是数字电路的基本单元，也是计算机里最小
              "常见的门电路包括与门、或门、非门和异或门。把这些门组合起来，就能做出整个CPU。")
 
 
+FAKE = {"revise": False}   # 1.0.3 的取消检查要一段长文案；1.1.0 的检查再让假模型按「缩写」要求返回短文案
+
+
 def start_fake_llm() -> int:
     """假的 OpenAI 兼容接口：写文案返回 UI_SCRIPT，关键词返回 JSON 数组，带 token 用量。"""
     import threading
@@ -511,9 +528,21 @@ def start_fake_llm() -> int:
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             prompt = body["messages"][-1]["content"]
-            text = '["logic gate", "circuit"]' if "search terms" in prompt else UI_SCRIPT * 3   # 长一点，留出取消的时间
+            msg = {"role": "assistant"}
+            if "search terms" in prompt:
+                text = '["logic gate", "circuit"]'
+            elif "缩写到约" in prompt and FAKE["revise"]:
+                text = UI_SCRIPT
+            elif "分镜导演" in prompt:
+                sys.path.insert(0, str(ROOT / "tests"))
+                from cards_task_check import fake_director_json
+                text = fake_director_json(prompt)
+                msg["reasoning_content"] = "共 7 句。第 1 句开场用标题；第 3–5 句讲三种门的规则，适合做成表格……"
+            else:
+                text = UI_SCRIPT * 3   # 长一点，留出取消的时间
+            msg["content"] = text
             data = json.dumps({"id": "chatcmpl-ui", "object": "chat.completion", "created": 1, "model": body.get("model"),
-                               "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                               "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
                                "usage": {"prompt_tokens": 512, "completion_tokens": 260, "total_tokens": 772}}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -587,14 +616,9 @@ def run_103(page, base: str, data: Path, assets: Path):
     text = exp.inner_text()
     expect("最终渲染" in text and "原始日志第" in text and "在做什么" in text, "日志解读按步骤显示，带原始日志行号")
     page.screenshot(path=str(assets / "screen-log-explain-100.png"))
-    llm = frame.locator("[data-testid='stExpander']").filter(has=frame.locator("summary", has_text="大模型调用记录")).last
-    llm.locator("summary").first.click()
-    frame.wait_for_timeout(2000)
-    t2 = llm.inner_text()
-    expect("写文案" in t2 and "Length Requirement" in t2 and "772" in t2 and FAKE_KEY not in t2 and "在界面上" in t2,
-           "大模型调用记录：界面上生成文案的那次被复制进任务，有完整提示词（含目标时长）、token，没有钥匙")
-    llm.scroll_into_view_if_needed()
-    page.screenshot(path=str(assets / "screen-llm-calls-100.png"))
+    links = frame.locator("a.svf-goto")
+    expect(links.count() >= 2 and frame.locator("[data-testid='stExpander']").filter(has=frame.locator("summary", has_text="大模型调用记录")).count() == 0,
+           "1.1.0：生成页不再展开大模型调用记录，只留「审片 / 分镜」「模型调用」链接", f"链接 {links.count()} 个")
     rec_file = data / "storage" / "tasks" / tid / "llm_calls.jsonl"
     expect(rec_file.exists() and FAKE_KEY not in rec_file.read_text(encoding="utf-8"), "任务目录有 llm_calls.jsonl，里面没有钥匙")
     expect(frame.locator("[data-testid='stCode'] .linenumber, [data-testid='stCode'] [class*='linenumber']").count() > 0
@@ -648,6 +672,111 @@ def run_103(page, base: str, data: Path, assets: Path):
     frame.wait_for_timeout(1000)
 
 
+def run_110(page, base: str, data: Path, assets: Path):
+    """1.1.0：AI 导演出片（假大模型）→ 审片 / 分镜 → 模型调用；任务管理入口；字数控制方式。"""
+    FAKE["revise"] = True
+    page.click("#tab-studio")
+    frame = wait_studio(page)
+    dismiss_tour(frame)
+    frame.locator(".mpt-grouped-select select").first.select_option(value="knowledge_cards_ai")
+    frame.wait_for_timeout(2500)
+    box = frame.locator("[data-testid='stSelectbox']").filter(has_text="字数控制方式").first
+    expect(box.count() == 1 and "模型只按「大约」写" in frame.inner_text("body"), "目标时长下面有「字数控制方式」，默认「程序检查（推荐）」")
+    box.scroll_into_view_if_needed()
+    box.click()
+    frame.wait_for_timeout(800)
+    opts = [o.inner_text() for o in frame.locator("[role='option']").all()]
+    expect(any("严格" in o for o in opts) and any("不控制" in o for o in opts), "字数控制方式有三档", "；".join(opts))
+    page.screenshot(path=str(assets / "screen-length-mode-100.png"))
+    page.keyboard.press("Escape")
+    frame.wait_for_timeout(800)
+    frame.locator("textarea[aria-label*='视频主题']").first.fill("逻辑门是怎样工作的")
+    frame.locator("textarea[aria-label*='视频主题']").first.press("Tab")
+    frame.wait_for_timeout(1200)
+    frame.locator("textarea[aria-label*='视频文案']").first.fill("")
+    frame.locator("button").filter(has_text="点击使用AI生成视频文案和关键词").first.click()
+    for _ in range(40):   # 假大模型第一次写约 600 字（目标 270）→ 程序检查：偏差超过 ±15%，请它缩写一次
+        frame.wait_for_timeout(1000)
+        v = frame.locator("textarea[aria-label*='视频文案']").first.input_value()
+        if "逻辑门是数字电路的基本单元" in v:
+            break
+    v = frame.locator("textarea[aria-label*='视频文案']").first.input_value()
+    expect(v.strip() == UI_SCRIPT.strip(), "字数控制「程序检查」：第一次写得太长，程序请模型缩写一次，文案框里是缩写后的",
+           f"{len(v)} 字符")
+    frame.locator("button").filter(has_text="无配音").first.click()
+    frame.wait_for_timeout(2000)
+    before = finals_of(data)
+    t0 = time.time()
+    frame.locator("button").filter(has_text="生成视频").last.click()
+    done, finals, _ = wait_generation(page, frame, data, before)
+    tdir = finals[0].parent if finals else None
+    man = json.loads((tdir / "svf_storyboard.json").read_text(encoding="utf-8")) if tdir and (tdir / "svf_storyboard.json").exists() else {}
+    expect(done and man.get("mode") == "ai", "AI 导演 + 无配音出片（假大模型返回导演 JSON）",
+           f"用时 {time.time() - t0:.0f} 秒，{len(man.get('pages') or [])} 页：{'、'.join(p['kind_label'] + '「' + p['heading'] + '」' for p in man.get('pages') or [])}")
+    if not tdir:
+        return
+    tid = tdir.name
+    link = frame.locator(f"a.svf-goto[data-tab='review'][data-task='{tid}']").first
+    link.scroll_into_view_if_needed()
+    link.click()
+    page.wait_for_timeout(2500)
+    expect(page.locator("#tab-review").get_attribute("class") == "on" and page.locator("#rv-task").input_value() == tid,
+           "点生成页的「审片 / 分镜」切到外壳顶层标签页，选中这个任务")
+    tiles = page.locator("#rv-grid .tile")
+    expect(tiles.count() == len(man["pages"]) and page.locator("#rv-grid .tile img").count() == len(man["pages"]),
+           "审片：网格铺开每一页的缩略图", f"{tiles.count()} 格")
+    t3 = tiles.nth(2).inner_text()
+    p3 = man["pages"][2]
+    expect(f"3 · {p3['kind_label']}" in t3 and p3["heading"] in t3 and p3["text"][:12] in t3, "审片每格：序号和版式名、起止时间、标题、口播文字",
+           t3.replace("\n", " / "))
+    page.screenshot(path=str(assets / "screen-review-grid-100.png"))
+    tiles.nth(2).click()
+    page.wait_for_timeout(1500)
+    cur = page.evaluate("document.getElementById('rv-video') && document.getElementById('rv-video').currentTime")
+    expect(cur is not None and abs(cur - man["pages"][2]["start"]) < 1.0, "点一格，成片跳到那一页的时间", f"currentTime={cur}，这一页从 {man['pages'][2]['start']} 秒开始")
+    page.click("#rv-mode-detail")
+    page.wait_for_timeout(1200)
+    page.locator("#rv-list [data-sel='2']").click()
+    page.wait_for_timeout(1200)
+    one = page.inner_text("#rv-one")
+    sent = "第 " + "、".join(str(x) for x in (p3.get("sentences") or [])) + " 句"
+    expect("画面类型" in one and p3["kind_label"] in one and "口播原文" in one and sent in one and "结构化数据" in one,
+           "分镜：左边列表，右边大图、画面类型、口播原文和字数、起止时间、对应句子、结构化数据（表格）")
+    page.screenshot(path=str(assets / "screen-review-detail-100.png"))
+    # 模型调用
+    page.click("#tab-calls")
+    page.wait_for_timeout(500)
+    page.select_option("#lc-task", tid)
+    page.wait_for_timeout(2000)
+    body = page.inner_text("#lc-body")
+    expect("AI 导演设计分镜" in body and "程序发给模型的" in body and "模型返回的内容" in body and "程序最后怎么用它" in body
+           and "解析成分镜 JSON" in body and FAKE_KEY not in page.content(), "模型调用：谁说的、返回内容、程序怎么用，没有钥匙")
+    expect(page.locator("#lc-body .run.var").count() > 0 and page.locator("#lc-body .tag").filter(has_text="视频主题").count() > 0,
+           "模型调用：提示词里程序填进去的变量（视频主题、编号句子）着色标出")
+    expect(page.locator("#lc-body .lc-block.think").count() >= 1, "模型调用：思考过程（reasoning_content）单独一块，可折叠")
+    expect(page.locator("#lc-body .lc-chain").count() >= 1, "模型调用：标出调用链（上一次的输出进了下一次的输入）",
+           "；".join(x.inner_text() for x in page.locator("#lc-body .lc-chain").all())[:300])
+    page.locator("#lc-body .lc-call").last.scroll_into_view_if_needed()
+    page.screenshot(path=str(assets / "screen-llm-calls-100.png"))
+    page.locator("#lc-body .lc-call").first.scroll_into_view_if_needed()
+    page.screenshot(path=str(assets / "screen-llm-calls-script-100.png"))
+    page.locator("#lc-body .lc-block.think summary").first.click()
+    page.wait_for_timeout(500)
+    page.locator("#lc-body [data-copy]").first.click()
+    page.wait_for_timeout(500)
+    expect("已复制" in page.inner_text("#toast") or "复制失败" in page.inner_text("#toast"), "「复制」按钮有反馈", page.inner_text("#toast"))
+    # 上一个任务（界面上生成文案 + 按字数改写 + 提取关键词…）里的调用链
+    page.click("#tab-studio")
+    frame = wait_studio(page)
+    frame.locator("button").filter(has_text="任务管理").first.click()
+    frame.wait_for_timeout(3000)
+    lk = frame.locator(f"a.svf-goto[data-tab='review'][data-task='{tid}']")
+    expect(lk.count() >= 1, "任务管理：已完成的任务有「审片 / 分镜」「模型调用」入口（补丁 P9）")
+    page.screenshot(path=str(assets / "screen-task-links-100.png"))
+    page.keyboard.press("Escape")
+    frame.wait_for_timeout(1000)
+
+
 ICONS = {"expand_more", "settings", "keyboard_arrow_right", "keyboard_arrow_down", "auto_awesome", "restart_alt", "preview",
          "graphic_eq", "article", "download", "upload", "close", "check", "delete", "folder_open", "refresh", "add", "remove"}
 
@@ -693,7 +822,7 @@ def main():
     ap.add_argument("--generate", action="store_true", help="走通一条离线出片（本地素材 + 无配音）")
     ap.add_argument("--media", default="", help="--generate 用的两个测试视频所在目录（clip1.mp4、clip2.mp4）")
     ap.add_argument("--assets", default="", help="1.0.3 检查的截图另存到这里（如 docs/assets）")
-    ap.add_argument("--only-103", action="store_true", help="只跑 1.0.3 新增的检查（调试用）")
+    ap.add_argument("--only-103", action="store_true", help="只跑 1.0.3、1.1.0 新增的检查（调试用）")
     a = ap.parse_args()
     shots = Path(a.shots)
     shots.mkdir(parents=True, exist_ok=True)
@@ -724,6 +853,7 @@ def main():
                 run_cards_ui(page, shots, data)
             if a.only_103:
                 run_103(page, base, data, Path(a.assets) if a.assets else shots)
+                run_110(page, base, data, Path(a.assets) if a.assets else shots)
             elif a.generate:
                 media = Path(a.media) if a.media else Path(tempfile.mkdtemp(prefix="svf-media-"))
                 for i, src in enumerate(("testsrc2", "mandelbrot"), 1):
@@ -733,6 +863,7 @@ def main():
                 run_generate(page, base, data, media)
                 run_generate_cards(page, base, data)
                 run_103(page, base, data, Path(a.assets) if a.assets else shots)
+                run_110(page, base, data, Path(a.assets) if a.assets else shots)
             page.click("#tab-studio")
             wait_studio(page)
             scan_english(page)
