@@ -1154,9 +1154,10 @@ def _is_headless_server():
 
 
 def _open_local_path(path):
-    # [补丁 P5] webbrowser.open("file://…") 在 Windows 上静默失败；改用 os.startfile / open / xdg-open
+    # [补丁 P5] webbrowser.open("file://…") 在 Windows 上静默失败；
+    # [补丁 P7] 改为请外壳主进程打开（只限数据目录之内），失败时显示完整路径和「复制路径」
     if svf_webui:
-        svf_webui.open_path(path)
+        svf_webui.open_folder(st, path)
     else:
         webbrowser.open(Path(path).as_uri())
 
@@ -1168,6 +1169,8 @@ def _open_task_path(task_path):
         logger.warning(f"invalid task folder path: {normalized_path}")
         return
     if not os.path.isdir(normalized_path):
+        if svf_webui:  # [补丁 P7] 不再静默返回：说明文件夹不存在，并给出完整路径
+            svf_webui.report_open_failure(st, normalized_path, "任务文件夹不存在（任务还没开始写文件，或已被删除）")
         return
     if _is_headless_server():
         # storage 目录通常以卷挂载映射回宿主机，提示相对路径即可定位文件。
@@ -1413,6 +1416,8 @@ def _render_task_manager_panel(tasks=None):
             ]
             _render_task_table(filtered_tasks, status_key)
 
+    if svf_webui:  # [补丁 P7] 打开失败时显示完整路径和「复制路径」
+        svf_webui.render_open_failure(st, "tasks")
     _render_task_video_preview()
 
 
@@ -2833,6 +2838,8 @@ def _render_cache_management_settings(panel):
             icon=":material/folder_open:",
         ):
             _open_local_path(cache_manager.video_cache_dir())  # [补丁 P5]
+        if svf_webui:  # [补丁 P7] 打开失败时显示完整路径和「复制路径」
+            svf_webui.render_open_failure(st, "cache")
 
         cleanup_disabled = not confirmed or cleanup_preview.file_count == 0
         if cleanup_col.button(

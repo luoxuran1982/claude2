@@ -188,6 +188,40 @@
   window.__svfTranslate = tr;  // 供界面检查脚本使用
   window.__svfTranslateAlert = trAlert;
 
+  // ---------- 4. 「复制路径」按钮（打开文件夹失败时的兜底，见 svf_ext/webui.py 的 copy_button_html） ----------
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy") ? resolve() : reject(new Error("copy")); } catch (err) { reject(err); }
+      ta.remove();
+    });
+  }
+  document.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest("button.svf-copy-path");
+    if (!b) return;
+    e.preventDefault();
+    const old = b.dataset.label || b.textContent;
+    b.dataset.label = old;
+    copyText(b.dataset.copy || "").then(() => { b.textContent = "✅ 已复制"; }, () => { b.textContent = "复制失败，请手动选中上面的路径"; })
+      .finally(() => setTimeout(() => { b.textContent = old; }, 2000));
+  }, true);
+  window.__svfCopyText = copyText;
+
+  // ---------- 5. 「生成视频」防连击：点一次后 4 秒内再点无效（后台另有防重复提交，见 svf_ext/tasks.py） ----------
+  document.addEventListener("click", e => {
+    const b = e.target.closest && e.target.closest(".st-key-generate_video_button button");
+    if (!b) return;
+    const now = Date.now();
+    if (b.__svfClickedAt && now - b.__svfClickedAt < 4000) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      return;
+    }
+    b.__svfClickedAt = now;
+  }, true);
+
   // ---------- 3. 外部链接交给系统浏览器 ----------
   document.addEventListener("click", e => {
     const a = e.target.closest && e.target.closest("a[href]");

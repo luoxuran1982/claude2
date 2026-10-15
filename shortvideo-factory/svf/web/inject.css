@@ -2,3 +2,7 @@
 html { -webkit-text-size-adjust: 100%; }
 /* 嵌在外壳窗口里时，上游页面顶部留白再收一点，和外壳顶栏衔接 */
 div[data-testid="stMainBlockContainer"] { padding-top: 0.25rem !important; }
+/* 打开文件夹失败时的「复制路径」按钮（svf_ext/webui.py） */
+button.svf-copy-path { font: inherit; font-size: 0.875rem; padding: 0.25rem 0.75rem; border-radius: 0.5rem; cursor: pointer;
+  border: 1px solid rgba(49, 51, 63, 0.25); background: #fff; color: #31333f; }
+button.svf-copy-path:hover { border-color: #ff4b4b; color: #ff4b4b; }

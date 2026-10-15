@@ -183,6 +183,7 @@ class Shell:
         url = f"http://127.0.0.1:{port}/"
         log.info("本机服务：%s", url)
         atexit.register(self.shutdown)
+        webui.shell_url, webui.shell_token = f"http://127.0.0.1:{port}", self.state.token
         if not a.no_webui:
             webui.start()
         self.write_record()

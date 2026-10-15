@@ -254,20 +254,44 @@ class HintsTest(unittest.TestCase):
 class DesktopTest(unittest.TestCase):
     def test_platform_branches(self):
         calls = []
-        self.assertTrue(desktop.open_path(r"C:\tasks\x", "win32", startfile=lambda p: calls.append(("startfile", p)),
-                                          popen=lambda *a, **k: calls.append(("popen", a))))
+        self.assertTrue(desktop.open_local(r"C:\tasks\x", "win32", startfile=lambda p: calls.append(("startfile", p)),
+                                           popen=lambda *a, **k: calls.append(("popen", a))))
         self.assertEqual(calls[-1][0], "startfile")
-        self.assertTrue(desktop.open_path("/tmp/x", "darwin", popen=lambda cmd, **k: calls.append(("popen", cmd))))
+        self.assertTrue(desktop.open_local("/tmp/x", "darwin", popen=lambda cmd, **k: calls.append(("popen", cmd))))
         self.assertEqual(calls[-1], ("popen", ["open", os.path.abspath("/tmp/x")]))
-        self.assertTrue(desktop.open_path("/tmp/x", "linux", popen=lambda cmd, **k: calls.append(("popen", cmd))))
+        self.assertTrue(desktop.open_local("/tmp/x", "linux", popen=lambda cmd, **k: calls.append(("popen", cmd))))
         self.assertEqual(calls[-1], ("popen", ["xdg-open", os.path.abspath("/tmp/x")]))
         self.assertNotIn("file://", repr(calls))
 
     def test_failure_returns_false(self):
         def boom(*a, **k):
             raise OSError("no handler")
-        self.assertFalse(desktop.open_path("/tmp/x", "linux", popen=boom))
-        self.assertFalse(desktop.open_path("C:/x", "win32", startfile=boom))
+        self.assertFalse(desktop.open_local("/tmp/x", "linux", popen=boom))
+        self.assertFalse(desktop.open_local("C:/x", "win32", startfile=boom))
+
+    def test_without_shell_opens_locally_and_reports_missing_folder(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            res = desktop.open_folder(d, "linux", popen=lambda cmd, **k: calls.append(cmd), endpoint=())
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["via"], "local")
+            self.assertEqual(calls[-1], ["xdg-open", os.path.abspath(d)])
+        res = desktop.open_folder(os.path.join(d, "gone"), "linux", popen=lambda cmd, **k: calls.append(cmd), endpoint=())
+        self.assertFalse(res["ok"])
+        self.assertIn("不存在", res["error"])
+        self.assertEqual(res["path"], os.path.abspath(os.path.join(d, "gone")))
+
+    def test_unreachable_shell_falls_back_to_local(self):
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            res = desktop.open_folder(d, "linux", popen=lambda cmd, **k: calls.append(cmd),
+                                      endpoint=(f"http://127.0.0.1:{port}", "T"))
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["via"], "local")
 
 
 class ProxyTest(unittest.TestCase):

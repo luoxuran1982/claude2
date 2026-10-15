@@ -189,6 +189,8 @@ class WebUI:
         self._lock = threading.RLock()
         self._job = None
         self._log_file = None
+        self.shell_url = ""        # 外壳本机服务地址和令牌：子进程经它打开文件夹（见 server.OpenPathHandler）
+        self.shell_token = ""
 
     # 子进程环境：上游的配置、任务、字体、音乐目录都指向用户数据目录（见 UPSTREAM.md 补丁 P1/P2/P3）
     def env(self) -> dict:
@@ -212,6 +214,9 @@ class WebUI:
             "PYTHONUNBUFFERED": "1",
             "SVF_CHILD": "1",
         })
+        if self.shell_url:
+            env["SVF_SHELL_URL"] = self.shell_url
+            env["SVF_SHELL_TOKEN"] = self.shell_token
         if getattr(sys, "frozen", False):
             env["PYTHONDONTWRITEBYTECODE"] = "1"   # 安装目录只读，.pyc 已在打包时预编译
         return env

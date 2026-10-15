@@ -8,15 +8,17 @@
 """
 from __future__ import annotations
 
+import html
 import re
 
+from . import desktop
 from . import (CARD_GROUP_LABEL, CARD_SOURCE_LABELS, CARD_SOURCES, DEFAULT_THEME, HYBRID_STOCK, KNOWLEDGE_CARDS,
                THEME_CONFIG_KEY, THEME_LABELS, hints)
-from .desktop import open_path
+from .desktop import open_path  # noqa: F401  （1.0.2 的接口，保留兼容）
 
 hints.install_log_sink()
 
-__all__ = ["CARD_GROUP_LABEL", "CARD_SOURCE_LABELS", "CARD_SOURCES", "HYBRID_SOURCES", "open_path", "render_source_options",
+__all__ = ["open_folder", "render_open_failure", "CARD_GROUP_LABEL", "CARD_SOURCE_LABELS", "CARD_SOURCES", "HYBRID_SOURCES", "open_path", "render_source_options",
            "render_key_hint", "render_material_proxy", "render_voice_language_warning", "tts_failure_hint",
            "proxy_problem", "set_material_proxy"]
 
@@ -117,3 +119,48 @@ def render_voice_language_warning(st, params, tts_server: str) -> bool:
         st.warning(msg)
         return True
     return False
+
+
+# ---------------------------------------------------------------- 打开目录
+
+OPEN_FAIL_KEY = "svf_open_failure"
+
+
+def copy_button_html(text: str, label: str = "复制路径") -> str:
+    """「复制路径」按钮。点击由外壳页面脚本 svf/web/inject.js 处理（写入剪贴板），Streamlit 本身不执行页面里的脚本。"""
+    return (f'<button type="button" class="svf-copy-path" data-copy="{html.escape(text, quote=True)}" '
+            f'title="把完整路径复制到剪贴板">📋 {html.escape(label)}</button>')
+
+
+def open_folder(st, path) -> bool:
+    """打开文件夹（经外壳主进程，见 desktop.open_folder）。失败时记下原因和完整路径，由 render_open_failure 显示。"""
+    res = desktop.open_folder(str(path))
+    if res.get("ok"):
+        st.session_state.pop(OPEN_FAIL_KEY, None)
+        st.toast(f"已请系统打开文件夹：{res.get('path')}", icon="📂")
+    else:
+        st.session_state[OPEN_FAIL_KEY] = {"path": res.get("path") or str(path), "error": res.get("error") or "原因不明"}
+        st.toast("没能打开文件夹，完整路径显示在下方，可以复制后手动打开", icon="⚠️")
+    return bool(res.get("ok"))
+
+
+def report_open_failure(st, path, error: str) -> None:
+    st.session_state[OPEN_FAIL_KEY] = {"path": str(path), "error": error}
+    st.toast("没能打开文件夹，完整路径显示在下方", icon="⚠️")
+
+
+def _dismiss_open_failure(st):
+    st.session_state.pop(OPEN_FAIL_KEY, None)
+
+
+def render_open_failure(st, where: str) -> None:
+    """打开失败的兜底：显示原因、完整路径和「复制路径」按钮。"""
+    res = st.session_state.get(OPEN_FAIL_KEY)
+    if not res:
+        return
+    with st.container(border=True):
+        st.error(f"没能打开文件夹：{res['error']}")
+        st.caption("可以复制下面的完整路径，粘贴到资源管理器（Windows）的地址栏，或访达「前往 → 前往文件夹」（macOS）里打开。")
+        st.code(res["path"], language=None)
+        st.markdown(copy_button_html(res["path"]), unsafe_allow_html=True)
+        st.button("知道了", key=f"svf_open_fail_ok_{where}", on_click=_dismiss_open_failure, args=(st,))

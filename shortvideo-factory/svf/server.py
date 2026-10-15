@@ -61,6 +61,7 @@ class AppState:
         self.on_focus = lambda: None
         self.window_mode = "服务模式（无窗口）"
         self.last_seen = time.time()
+        self.opener = open_path      # 打开本机文件夹（测试里换成假的）
 
     def paths(self) -> dict:
         d = self.data
@@ -178,13 +179,56 @@ class RestartHandler(Base):
         self.send_json({"ok": True})
 
 
+def _win_open_folder(target: str) -> None:
+    """Windows：在一个新线程里先初始化 COM（单线程套间），允许被打开的窗口抢到前台，再 os.startfile。
+    打开文件夹时 ShellExecute 会把请求交给资源管理器（COM 委托），调用线程没有初始化 COM 时可能静默失败；
+    而且只有前台进程（本进程拥有应用窗口）才能把新窗口放到最前面。startfile 报错时退回 explorer.exe。"""
+    import ctypes
+    result: dict = {}
+
+    def run():
+        ole32 = ctypes.WinDLL("ole32")
+        hr = ole32.CoInitializeEx(None, 0x2 | 0x4)   # COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE
+        try:
+            try:
+                ctypes.WinDLL("user32").AllowSetForegroundWindow(-1)   # ASFW_ANY
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                os.startfile(target)  # noqa: S606 —— 打开本机文件夹
+            except OSError as exc:
+                log.warning("os.startfile 打开 %s 失败（%s），改用 explorer.exe", target, exc)
+                subprocess.Popen(["explorer.exe", os.path.normpath(target)])
+        except Exception as exc:  # noqa: BLE001
+            result["error"] = exc
+        finally:
+            if hr in (0, 1):
+                ole32.CoUninitialize()
+
+    t = threading.Thread(target=run, name="open-folder", daemon=True)
+    t.start()
+    t.join(15)
+    if "error" in result:
+        raise result["error"]
+
+
 def open_path(target: str) -> None:
+    """用系统的文件管理器打开文件夹。失败时抛异常。"""
     if sys.platform == "darwin":
         subprocess.Popen(["open", target])
     elif sys.platform == "win32":
-        os.startfile(target)  # noqa: S606 —— 打开本机文件夹
+        _win_open_folder(target)
     else:
-        subprocess.Popen(["xdg-open", target])
+        subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def inside(path: Path, root: Path) -> bool:
+    """path（解析符号链接、.. 之后）是否在 root 之内（含 root 本身）。"""
+    try:
+        p, r = os.path.realpath(str(path)), os.path.realpath(str(root))
+        return os.path.normcase(os.path.commonpath([p, r])) == os.path.normcase(r)
+    except ValueError:   # Windows 上不同盘符
+        return False
 
 
 class OpenHandler(Base):
@@ -206,8 +250,42 @@ class OpenHandler(Base):
         target = Path(paths[what])
         if what != "config":
             target.mkdir(parents=True, exist_ok=True)
-        open_path(str(target if target.exists() else target.parent))
+        self.state.opener(str(target if target.exists() else target.parent))
         self.send_json({"ok": True, "path": str(target)})
+
+
+class OpenPathHandler(Base):
+    """生成界面后台（Streamlit 子进程）请外壳打开文件夹：任务目录、缓存目录等。
+
+    为什么要绕这一圈：子进程在后台运行、没有窗口（Windows 上用 CREATE_NO_WINDOW 启动、放在作业对象里），
+    它自己调用 os.startfile 打开文件夹在用户的 Windows 上没有反应；外壳主进程拥有应用窗口、运行在用户桌面的前台，
+    由它来打开最可靠。只允许打开数据目录之内的路径；是文件时打开它所在的文件夹。
+    请求体：{"path": "...", "check_only": false}；check_only 只检查路径不真的打开（冒烟测试用）。"""
+
+    def post(self):
+        self.check_token()
+        body = self.json_body()
+        raw = str(body.get("path") or "")
+        if not raw:
+            return self.send_json({"ok": False, "error": "没有给出路径", "path": raw}, 400)
+        target = Path(os.path.abspath(raw))
+        root = self.state.data
+        if not inside(target, root):
+            return self.send_json({"ok": False, "error": f"只能打开数据目录（{root}）之内的文件夹", "path": str(target)}, 403)
+        if target.is_file():
+            target = target.parent
+        if not target.is_dir():
+            return self.send_json({"ok": False, "error": "文件夹不存在（可能已被删除）", "path": str(target)}, 404)
+        if body.get("check_only"):
+            return self.send_json({"ok": True, "path": str(target), "opened": False})
+        try:
+            self.state.opener(str(target))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("打开文件夹失败：%s，%s", target, exc)
+            return self.send_json({"ok": False, "error": f"系统没能打开文件夹：{type(exc).__name__}: {exc}",
+                                   "path": str(target)}, 500)
+        log.info("已请求系统打开文件夹：%s", target)
+        self.send_json({"ok": True, "path": str(target), "opened": True})
 
 
 class GuideIndexHandler(Base):
@@ -427,6 +505,7 @@ def make_app(state: AppState) -> tornado.web.Application:
         (r"/api/focus", FocusHandler, s),
         (r"/api/webui/restart", RestartHandler, s),
         (r"/api/open", OpenHandler, s),
+        (r"/api/open-path", OpenPathHandler, s),
         (r"/api/guide", GuideIndexHandler, s),
         (r"/api/guide/doc", GuideTextHandler, {"state": state, "kind": "doc"}),
         (r"/api/guide/source", GuideTextHandler, {"state": state, "kind": "source"}),

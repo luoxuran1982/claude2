@@ -8,7 +8,10 @@
 
 用法（cwd 必须是上游目录，MPT_CONFIG_FILE / MPT_STORAGE_DIR / MPT_FONT_DIR 指向临时目录和字体目录）：
 
-    python cards_task_check.py <svf_ext 所在目录> [knowledge_cards|hybrid_pixabay]
+    python cards_task_check.py <svf_ext 所在目录> [knowledge_cards|hybrid_pixabay] [--long] [--bgm] [--landscape]
+
+--long 用约 50 秒的长文案（用来测出片用时，见 docs/02「知识卡片快速通道」的实测）；--bgm 生成一段本地背景音乐并开启混音；
+--landscape 用 16:9 横屏。
 
 最后一行输出 RESULT {json}。由 tests/test_cards.py（源码）和 packaging/smoke.py（安装包里的随包 Python）调用。
 """
@@ -27,6 +30,11 @@ if len(sys.argv) > 1:
 
 SCRIPT = ("逻辑门是数字电路的基本单元。与门只有两个输入都为1时才输出1。或门只要有一个输入为1就输出1。非门则把输入取反。"
           "计算机先把信号转成二进制，再交给逻辑门运算，最后输出结果。")
+LONG_SCRIPT = ("逻辑门是数字电路的基本单元，也是计算机里最小的“判断员”。与门只有两个输入都为1时才输出1。或门只要有一个输入为1就输出1。"
+               "非门则把输入取反，1变0，0变1。学习逻辑门有三个要点：第一，记住真值表。第二，会画电路符号。第三，能把门组合成加法器。"
+               "计算机处理数据，先把信号转成二进制，再交给逻辑门运算，最后输出结果。晶体管的开关速度可以达到每秒10亿次。"
+               "CPU里有数十亿个晶体管，而早期的计算机只有几千个电子管。常见的门电路包括与门、或门、非门和异或门。"
+               "把这些门组合起来，就能做出加法器、存储器，乃至整个CPU。下次看到电脑在飞快地计算，你就知道，它其实是在做无数次简单的判断。")
 SECONDS_PER_CHAR = 0.16
 
 
@@ -49,16 +57,34 @@ def fake_tts(text, voice_name, voice_rate, voice_file, **kwargs):
     return sub
 
 
+def _make_bgm(path: str, seconds: float = 20.0) -> None:
+    from app.utils import utils
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    subprocess.run([utils.get_ffmpeg_binary(), "-v", "error", "-y", "-f", "lavfi", "-i",
+                    f"sine=frequency=220:sample_rate=44100:duration={seconds:.1f}", "-c:a", "libmp3lame", "-b:a", "96k", path],
+                   check=True)
+
+
 def main() -> None:
-    source = sys.argv[2] if len(sys.argv) > 2 else "knowledge_cards"
+    args = [a for a in sys.argv[2:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[2:] if a.startswith("--")}
+    source = args[0] if args else "knowledge_cards"
     from app.models.schema import VideoParams
     from app.services import state as sm, task as tm, voice
     from app.utils import utils
 
     voice.tts = fake_tts
     task_id = str(uuid.uuid4())
-    params = VideoParams(video_subject="逻辑门", video_script=SCRIPT, video_source=source, video_aspect="9:16",
-                         voice_name="zh-CN-XiaoxiaoNeural-Female", bgm_type="", bgm_volume=0.0, subtitle_enabled=True,
+    bgm_type, bgm_file, bgm_volume = "", "", 0.0
+    if "--bgm" in flags:
+        from app.utils import utils as _u
+        bgm_file = "svf-check-bgm.mp3"
+        _make_bgm(os.path.join(_u.song_dir(), bgm_file))
+        bgm_type, bgm_volume = "custom", 0.2
+    params = VideoParams(video_subject="逻辑门", video_script=LONG_SCRIPT if "--long" in flags else SCRIPT,
+                         video_source=source, video_aspect="16:9" if "--landscape" in flags else "9:16",
+                         voice_name="zh-CN-XiaoxiaoNeural-Female", bgm_type=bgm_type, bgm_file=bgm_file,
+                         bgm_volume=bgm_volume, subtitle_enabled=True,
                          font_name="NotoSansSC-Bold.ttf", n_threads=2, video_count=1, video_clip_duration=3,
                          video_terms="logic gate")
     t0 = time.time()

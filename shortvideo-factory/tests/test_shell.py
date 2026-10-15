@@ -519,6 +519,68 @@ class ServerTest(unittest.TestCase):
                 self.get("/api/open", data=json.dumps(payload).encode(), headers={"X-SVF-Token": "TOKEN123"})
             self.assertEqual(cm.exception.code, 400)
 
+    def test_open_path_only_inside_data_dir(self):
+        """子进程请外壳打开文件夹：只允许数据目录之内；文件打开它所在的文件夹；不存在、越界都给出完整路径和原因。"""
+        opened = []
+        self.state.opener = opened.append
+        tasks = self.tmp / "storage" / "tasks" / "abc"
+        tasks.mkdir(parents=True, exist_ok=True)
+        (tasks / "final-1.mp4").write_bytes(b"x")
+        hdr = {"X-SVF-Token": "TOKEN123", "Content-Type": "application/json"}
+
+        def call(payload):
+            try:
+                _, _, body = self.get("/api/open-path", data=json.dumps(payload).encode(), headers=hdr)
+                return 200, json.loads(body)
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read())
+
+        code, res = call({"path": str(tasks)})
+        self.assertEqual((code, res["ok"], res["path"]), (200, True, str(tasks)))
+        self.assertEqual(opened[-1], str(tasks))
+        code, res = call({"path": str(tasks / "final-1.mp4")})
+        self.assertEqual((code, opened[-1]), (200, str(tasks)))
+        n = len(opened)
+        code, res = call({"path": str(tasks), "check_only": True})
+        self.assertEqual((code, res["ok"], len(opened)), (200, True, n))
+        for bad in ("/etc", str(self.tmp / ".." ), str(self.tmp / "storage" / ".." / ".." / "x")):
+            code, res = call({"path": bad})
+            self.assertEqual(code, 403, bad)
+            self.assertFalse(res["ok"])
+            self.assertIn("数据目录", res["error"])
+        code, res = call({"path": str(self.tmp / "storage" / "nope")})
+        self.assertEqual(code, 404)
+        self.assertEqual(res["path"], str(self.tmp / "storage" / "nope"))
+        link = self.tmp / "link-out"
+        try:
+            os.symlink("/etc", link)
+            code, _ = call({"path": str(link)})
+            self.assertEqual(code, 403)   # 符号链接指到数据目录外也不行
+        except (OSError, NotImplementedError):
+            pass
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get("/api/open-path", data=json.dumps({"path": str(tasks)}).encode())
+        self.assertEqual(cm.exception.code, 403)   # 没有令牌
+
+        def boom(path):
+            raise OSError("no association")
+        self.state.opener = boom
+        code, res = call({"path": str(tasks)})
+        self.assertEqual(code, 500)
+        self.assertIn("no association", res["error"])
+        self.assertEqual(res["path"], str(tasks))
+
+        # 子进程那一侧（svf_ext.desktop）经外壳打开
+        sys.path.insert(0, str(ROOT))
+        from svf_ext import desktop
+        self.state.opener = opened.append
+        res = desktop.open_folder(str(tasks), endpoint=(self.base, "TOKEN123"))
+        self.assertEqual((res["ok"], res["via"], opened[-1]), (True, "shell", str(tasks)))
+        res = desktop.open_folder("/etc", endpoint=(self.base, "TOKEN123"))
+        self.assertEqual((res["ok"], res["via"], res["status"]), (False, "shell", 403))
+        res = desktop.open_folder(str(tasks), endpoint=(self.base, "WRONG"))
+        self.assertFalse(res["ok"])
+
     def test_status_processes_guide(self):
         _, _, body = self.get("/api/status")
         st = json.loads(body)
