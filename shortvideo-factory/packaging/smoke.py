@@ -139,7 +139,7 @@ def check_runtime(py: Path, payload: Path, tmp: Path):
     if not (res.get("ok") and res.get("size") == [1080, 1920] and res.get("subtitle") and res.get("pages")):
         print(r.stdout[-4000:], r.stderr[-4000:])
         fail("知识讲解卡片离线任务没有产出可用的 mp4")
-    codec = re.search(r"知识卡片快速通道：编码器 (\S+)", r.stdout + r.stderr)
+    codec = re.search(r"知识卡片快速通道：编码器 ([A-Za-z0-9_]+)", r.stdout + r.stderr)
     ok(f"知识讲解卡片：离线跑通短任务，{len(res['pages'])} 页（{'、'.join(res['pages'])}），"
        f"成片 {res['duration']} 秒 {res['size'][0]}×{res['size'][1]}，用时 {time.time() - t0:.0f} 秒，"
        f"快速通道编码器 {codec.group(1) if codec else '（没走快速通道）'}")

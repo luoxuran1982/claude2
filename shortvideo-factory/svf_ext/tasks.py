@@ -242,27 +242,68 @@ def check(task_id: str) -> None:
         raise TaskCancelled(CANCEL_MSG)
 
 
+_POPENS: "weakref.WeakSet" = None   # 本进程启动的子进程（见 _install_popen_tracker）
+
+
+class _Proc:
+    """统一 psutil.Process 和 subprocess.Popen 的「看 PID、结束」两个动作。"""
+
+    def __init__(self, pid: int, kill):
+        self.pid, self._kill = pid, kill
+
+    def kill(self):
+        self._kill()
+
+
+def _install_popen_tracker() -> None:
+    """随包 Python 里没有 psutil（上游不依赖它），找不到「这个任务的 FFmpeg」。这里把 subprocess.Popen 换成一个
+    只多做一件事的子类：创建后记进一个弱引用集合。上游 MoviePy、imageio-ffmpeg、subprocess.run 和外壳自己
+    都通过 subprocess.Popen 启动 FFmpeg，所以都能被找到。不改变 Popen 的任何行为。"""
+    global _POPENS
+    import subprocess
+    import weakref
+    if _POPENS is not None:
+        return
+    _POPENS = weakref.WeakSet()
+    base = subprocess.Popen
+
+    class TrackedPopen(base):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            try:
+                _POPENS.add(self)
+            except TypeError:
+                pass
+    TrackedPopen.__name__ = TrackedPopen.__qualname__ = "Popen"
+    subprocess.Popen = TrackedPopen
+
+
 def task_processes(task_id: str) -> list:
-    """本进程的子孙进程里，命令行带着这个任务 ID（任务目录）的：FFmpeg 编码、拼接、知识卡片编码等。"""
-    try:
-        import psutil
-        procs = psutil.Process().children(recursive=True)
-    except Exception:  # noqa: BLE001
-        return []
-    out = []
-    for p in procs:
+    """本进程启动的、还在运行的子进程里，命令行带着这个任务 ID（任务目录）的：FFmpeg 编码、拼接、知识卡片合成等。"""
+    out, seen = [], set()
+    for p in list(_POPENS or ()):
         try:
-            if any(task_id in str(a) for a in p.cmdline()):
-                out.append(p)
+            if p.poll() is None and task_id in " ".join(map(str, p.args if isinstance(p.args, (list, tuple)) else [p.args])):
+                out.append(_Proc(p.pid, p.kill))
+                seen.add(p.pid)
         except Exception:  # noqa: BLE001
             continue
+    try:   # 有 psutil 时（源码运行）顺带找孙进程
+        import psutil
+        for p in psutil.Process().children(recursive=True):
+            try:
+                if p.pid not in seen and any(task_id in str(a) for a in p.cmdline()):
+                    out.append(_Proc(p.pid, p.kill))
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 
 def kill_task_processes(task_id: str) -> list[int]:
-    procs = task_processes(task_id)
     pids = []
-    for p in procs:
+    for p in task_processes(task_id):
         try:
             p.kill()
             pids.append(p.pid)
@@ -383,6 +424,7 @@ def install() -> None:
     if _INSTALLED[0]:
         return
     _INSTALLED[0] = True
+    _install_popen_tracker()
     from app.services import state as sm
     from app.services import task as task_service
     from app.services import webui_task

@@ -39,6 +39,8 @@ def language_of(text: str, language: str = "") -> str:
         return "zh"
     if lang and not lang.startswith("zh"):
         return "en" if not _CJK.search(text or "") else "zh"
+    if not re.search(r"[A-Za-z\u3400-\u9fff]", text or ""):
+        return "zh"     # 还没填主题和文案：本应用界面是中文，按中文估算
     return "zh" if _CJK.search(text or "") else "en"
 
 

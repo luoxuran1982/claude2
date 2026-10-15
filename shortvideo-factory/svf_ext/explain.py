@@ -228,7 +228,9 @@ def explain(records: list[str], extra: dict | None = None) -> dict:
 
     # 用自己写的文案时，上游也会打 "## generating video script"，但不调用大模型
     if extra.get("user_script") and by["script"].status != "pending":
-        by["script"].notes.append((by["script"].start_line, by["script"].start_time, "用的是你自己写的文案，没有调用大模型"))
+        text = ("文案是你在界面上点「生成文案」时由大模型写的（那次调用见下面的「大模型调用记录」），这次任务没有再调用大模型"
+                if extra.get("script_from_ui") else "用的是你自己写的文案，没有调用大模型")
+        by["script"].notes.append((by["script"].start_line, by["script"].start_time, text))
 
     if fail and state != "cancelled":
         stage, err, e = fail

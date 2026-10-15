@@ -50,12 +50,30 @@ EXT_CHANGED = [
 ]
 
 
+def clean_ext_outputs() -> None:
+    """--with-ext 时外壳扩展会在上游测试用的任务目录里写 svf_task.json、svf_status.json、llm_calls.jsonl
+    （upstream/storage 在 .gitignore 里，不会提交）。跑完删掉，免得留在源码目录里。上游有测试检查默认存储目录，所以不改 MPT_STORAGE_DIR。"""
+    tasks = UPSTREAM / "storage" / "tasks"
+    if not tasks.is_dir():
+        return
+    for d in tasks.iterdir():
+        if not d.is_dir():
+            continue
+        for name in ("svf_task.json", "svf_status.json", "llm_calls.jsonl"):
+            try:
+                (d / name).unlink()
+            except OSError:
+                pass
+        try:
+            d.rmdir()   # 只删空目录（是外壳扩展建的）
+        except OSError:
+            pass
+
+
 def main() -> int:
     with_ext = "--with-ext" in sys.argv[1:]
     tmp = Path(tempfile.mkdtemp(prefix="mpt-test-"))
     env = dict(os.environ, MPT_CONFIG_FILE=str(tmp / "config.toml"), PYTHONDONTWRITEBYTECODE="1")
-    if with_ext:   # 外壳扩展会在任务目录写 svf_task.json、svf_status.json、llm_calls.jsonl：放临时目录，不写进源码里的 upstream/storage
-        env["MPT_STORAGE_DIR"] = str(tmp / "storage")
     if with_ext:
         env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     else:   # 不加载外壳扩展：P5、P6 退回上游原行为
@@ -71,7 +89,11 @@ def main() -> int:
         args += ["--deselect", node]
     print(f"跳过 {len(deselect)} 组（商业字体 {len(COMMERCIAL_FONTS)}、自带音乐 {len(BUNDLED_SONGS)}、FFmpeg 版本 {len(FFMPEG_VERSION)}"
           + (f"、加载 svf_ext 后有意改变的行为 {len(EXT_CHANGED)}）" if with_ext else "）") + ("，加载外壳扩展 svf_ext" if with_ext else ""), flush=True)
-    return subprocess.call(args, cwd=UPSTREAM, env=env)
+    try:
+        return subprocess.call(args, cwd=UPSTREAM, env=env)
+    finally:
+        if with_ext:
+            clean_ext_outputs()
 
 
 if __name__ == "__main__":

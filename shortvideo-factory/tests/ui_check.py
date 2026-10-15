@@ -511,7 +511,7 @@ def start_fake_llm() -> int:
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             prompt = body["messages"][-1]["content"]
-            text = '["logic gate", "circuit"]' if "search terms" in prompt else UI_SCRIPT
+            text = '["logic gate", "circuit"]' if "search terms" in prompt else UI_SCRIPT * 3   # 长一点，留出取消的时间
             data = json.dumps({"id": "chatcmpl-ui", "object": "chat.completion", "created": 1, "model": body.get("model"),
                                "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
                                "usage": {"prompt_tokens": 512, "completion_tokens": 260, "total_tokens": 772}}).encode()
@@ -551,9 +551,9 @@ def run_103(page, base: str, data: Path, assets: Path):
     frame.wait_for_timeout(2500)
     box = frame.locator("[data-testid='stSelectbox']").filter(has_text="目标时长").first
     expect(box.count() == 1, "文案设置里有「目标时长（秒）」")
-    box.locator("input").first.click()
-    frame.page.keyboard.type("60 秒")
-    frame.page.keyboard.press("Enter")
+    box.click()
+    frame.wait_for_timeout(800)
+    frame.locator("[role='option']").filter(has_text="60 秒").first.click()
     frame.wait_for_timeout(2500)
     expect("约 270 字" in frame.inner_text("body"), "选 60 秒后显示换算的字数（约 270 字）")
     frame.locator("textarea[aria-label*='视频主题']").first.fill("逻辑门是怎样工作的")
@@ -581,17 +581,17 @@ def run_103(page, base: str, data: Path, assets: Path):
     btn = frame.locator(".st-key-generate_video_button button").first
     expect(btn.is_disabled() and "生成中" in btn.inner_text(), "生成中时按钮变灰、显示「生成中…」", btn.inner_text())
     tid = sorted(new)[0] if new else ""
-    exp = frame.locator("[data-testid='stExpander']").filter(has_text="日志解读").first
+    exp = frame.locator("[data-testid='stExpander']").filter(has=frame.locator("summary", has_text="日志解读")).first
     exp.scroll_into_view_if_needed()
     frame.wait_for_timeout(1500)
     text = exp.inner_text()
     expect("最终渲染" in text and "原始日志第" in text and "在做什么" in text, "日志解读按步骤显示，带原始日志行号")
     page.screenshot(path=str(assets / "screen-log-explain-100.png"))
-    llm = frame.locator("[data-testid='stExpander']").filter(has_text="大模型调用记录").first
+    llm = frame.locator("[data-testid='stExpander']").filter(has=frame.locator("summary", has_text="大模型调用记录")).last
     llm.locator("summary").first.click()
     frame.wait_for_timeout(2000)
     t2 = llm.inner_text()
-    expect("写文案" in t2 and "Length Requirement" in t2 and "772" in t2 and FAKE_KEY not in t2,
+    expect("写文案" in t2 and "Length Requirement" in t2 and "772" in t2 and FAKE_KEY not in t2 and "在界面上" in t2,
            "大模型调用记录：界面上生成文案的那次被复制进任务，有完整提示词（含目标时长）、token，没有钥匙")
     llm.scroll_into_view_if_needed()
     page.screenshot(path=str(assets / "screen-llm-calls-100.png"))
@@ -600,18 +600,36 @@ def run_103(page, base: str, data: Path, assets: Path):
     expect(frame.locator("[data-testid='stCode'] .linenumber, [data-testid='stCode'] [class*='linenumber']").count() > 0
            or "1\n" in frame.locator("[data-testid='stCode']").last.inner_text()[:6], "原始日志带行号")
     # 任务管理：取消、删除、打开目录
+    for b in frame.locator("button").filter(has_text="知道了").all():   # 上一个任务完成时自动打开目录失败的提示，先关掉
+        try:
+            b.click(timeout=2000)
+        except Exception:  # noqa: BLE001
+            pass
     frame.locator("button").filter(has_text="任务管理").first.click()
-    frame.wait_for_timeout(3000)
     cancel = frame.locator(f".st-key-cancel_task_all_{tid} button")
-    expect(cancel.count() == 1 and "不能直接删除" in frame.inner_text("body"), "任务管理：生成中的任务有「取消」，并说明为什么暂时不能删")
+    try:
+        cancel.first.wait_for(timeout=15000)
+    except Exception:  # noqa: BLE001
+        pass
+    frame.wait_for_timeout(1500)
+    note = frame.get_by_text("不能直接删除").count()
+    expect(cancel.count() >= 1 and note > 0, "任务管理：生成中的任务有「取消」，并说明为什么暂时不能删",
+           f"取消按钮 {cancel.count()} 个，说明 {note} 处")
     page.screenshot(path=str(assets / "screen-task-cancel-100.png"))
     cancel.first.click()
     frame.wait_for_timeout(5000)
     expect("已取消" in frame.inner_text("body"), "点「取消」后状态变成「已取消」")
     delete = frame.locator(f".st-key-delete_task_all_{tid} button")
-    expect(delete.count() == 1 and delete.first.is_enabled(), "取消后删除按钮可以点")
+    for _ in range(20):
+        if delete.count() >= 1 and delete.first.is_enabled():
+            break
+        frame.wait_for_timeout(500)
+    expect(delete.count() >= 1 and delete.first.is_enabled(), "取消后删除按钮可以点", f"删除按钮 {delete.count()} 个")
     frame.locator(f".st-key-open_task_all_{tid} button").first.click()
-    frame.wait_for_timeout(4000)
+    for _ in range(20):
+        frame.wait_for_timeout(500)
+        if "没能打开文件夹" in frame.inner_text("body") or "已请系统打开文件夹" in frame.inner_text("body"):
+            break
     body = frame.inner_text("body")
     ok_open = "已请系统打开文件夹" in body
     fail_ui = "没能打开文件夹" in body and str(data / "storage" / "tasks" / tid) in body
@@ -675,6 +693,7 @@ def main():
     ap.add_argument("--generate", action="store_true", help="走通一条离线出片（本地素材 + 无配音）")
     ap.add_argument("--media", default="", help="--generate 用的两个测试视频所在目录（clip1.mp4、clip2.mp4）")
     ap.add_argument("--assets", default="", help="1.0.3 检查的截图另存到这里（如 docs/assets）")
+    ap.add_argument("--only-103", action="store_true", help="只跑 1.0.3 新增的检查（调试用）")
     a = ap.parse_args()
     shots = Path(a.shots)
     shots.mkdir(parents=True, exist_ok=True)
@@ -696,13 +715,16 @@ def main():
             ok("生成界面经反向代理载入", f"{time.time() - t0:.0f} 秒")
             dismiss_tour(frame)
             page.screenshot(path=str(shots / "studio-100.png"))
-            run_zoom(page, shots)
-            run_guide(page, shots, base)
-            run_narrow(page)
-            rec = json.loads((data / "run.json").read_text(encoding="utf-8"))
-            run_status(page, rec, shots, base)
-            run_cards_ui(page, shots, data)
-            if a.generate:
+            if not a.only_103:
+                run_zoom(page, shots)
+                run_guide(page, shots, base)
+                run_narrow(page)
+                rec = json.loads((data / "run.json").read_text(encoding="utf-8"))
+                run_status(page, rec, shots, base)
+                run_cards_ui(page, shots, data)
+            if a.only_103:
+                run_103(page, base, data, Path(a.assets) if a.assets else shots)
+            elif a.generate:
                 media = Path(a.media) if a.media else Path(tempfile.mkdtemp(prefix="svf-media-"))
                 for i, src in enumerate(("testsrc2", "mandelbrot"), 1):
                     if not (media / f"clip{i}.mp4").exists():

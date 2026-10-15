@@ -4,7 +4,7 @@
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#475467"/></marker>
   </defs>
   <rect width="1000" height="640" fill="#ffffff"/>
-  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.2：进程与数据流</text>
+  <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1d2433">AI 短视频工厂 1.0.3：进程与数据流</text>
 
   <!-- 启动器 -->
   <rect x="30" y="55" width="420" height="300" rx="12" fill="#eef2ff" stroke="#1f3a8a" stroke-width="2"/>
@@ -16,7 +16,7 @@
   <rect x="50" y="180" width="380" height="160" rx="8" fill="#fff" stroke="#98a2b3"/>
   <text x="65" y="203" font-weight="bold">本机服务（tornado，127.0.0.1:端口A）</text>
   <text x="65" y="226" fill="#475467">/            外壳页面：顶栏、缩放、使用指南、运行状态</text>
-  <text x="65" y="248" fill="#475467">/api/*       状态、进程与内存、文档与源码、退出、打开文件夹</text>
+  <text x="65" y="248" fill="#475467">/api/*       状态、进程、文档源码、退出、打开文件夹</text>
   <text x="65" y="270" fill="#475467">/app/*       反向代理 HTTP（含视频 Range）</text>
   <text x="65" y="292" fill="#475467">/app/_stcore/stream  反向代理 WebSocket</text>
   <text x="65" y="314" fill="#475467">首页 HTML 插入 /ui/inject.js（中文化 + 缩放）</text>
@@ -30,11 +30,11 @@
   <text x="575" y="140" fill="#475467">webui/Main.py：MoneyPrinterTurbo 界面</text>
   <text x="575" y="162" fill="#475467">app/services/task.py：流水线</text>
   <text x="575" y="184" fill="#475467">文案 → 关键词 → 配音 → 字幕 → 素材 → 合成</text>
-  <text x="575" y="206" fill="#c2410c">svf_ext（[补丁 P5][P6]）：知识讲解卡片、中文原因、代理</text>
+  <text x="575" y="206" fill="#c2410c">svf_ext（补丁 P5–P8）：卡片、取消、日志解读</text>
   <rect x="560" y="230" width="185" height="110" rx="8" fill="#fff" stroke="#98a2b3"/>
   <text x="575" y="253" font-weight="bold">FFmpeg 子进程</text>
-  <text x="575" y="275" fill="#475467">MoviePy 剪辑拼接</text>
-  <text x="575" y="297" fill="#475467">字幕叠加、编码 MP4</text>
+  <text x="575" y="275" fill="#475467">库存视频：MoviePy 拼接</text>
+  <text x="575" y="297" fill="#475467">知识卡片：一次合成编码</text>
   <text x="575" y="319" fill="#475467">只在生成时存在</text>
   <rect x="765" y="230" width="185" height="110" rx="8" fill="#fff" stroke="#98a2b3"/>
   <text x="780" y="253" font-weight="bold">线程内网络调用</text>
@@ -67,7 +67,7 @@
   <text x="45" y="532" fill="#344054">fonts/  songs/  字体与背景音乐（MPT_FONT_DIR / MPT_SONG_DIR）</text>
   <text x="45" y="554" fill="#344054">logs/launcher.log  logs/webui.log</text>
   <text x="45" y="576" fill="#344054">shell.json 缩放档位　run.json 运行记录（退出时删除）</text>
-  <text x="45" y="598" fill="#344054">storage/tasks/…/knowledge-cards/  知识卡片每页画面（1.0.2）</text>
+  <text x="45" y="598" fill="#344054">storage/tasks/…/ knowledge-cards/、llm_calls.jsonl（1.0.3）</text>
   <line x1="660" y1="355" x2="420" y2="390" stroke="#475467" stroke-width="2" marker-end="url(#a)"/>
   <text x="560" y="380" fill="#475467">读写</text>
   <text x="560" y="600" fill="#475467" font-size="12">安装包内（只读）：payload/runtime 随包 Python、payload/upstream 上游源码、</text>

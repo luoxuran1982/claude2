@@ -360,8 +360,8 @@ def note_submission(task_id: str, params) -> None:
         p = duration.plan(_target_from_config(), lang, getattr(params, "voice_rate", 1.0))
         info.update(p or {"target_seconds": 0})
         duration.write_task(_task_dir(task_id), info)
-        if script.strip():
-            llmlog.adopt_ui_calls(task_id, script)
+        if script.strip() and llmlog.adopt_ui_calls(task_id, script):
+            duration.write_task(_task_dir(task_id), {"script_from_ui": True})
     except Exception as exc:  # noqa: BLE001
         from loguru import logger
         logger.warning(f"记录任务信息失败：{exc}")
@@ -414,7 +414,8 @@ def explain_markdown(res: dict, info: dict) -> str:
 def render_task_insights(st, task_id: str, log_records: list) -> None:
     """生成页：原始日志上方的「日志解读」和「大模型调用记录」。原始日志本身不动（只加了行号，方便对照）。"""
     info = _task_info(task_id)
-    res = explain.explain(log_records or [], {"user_script": info.get("user_script"), "source": info.get("source")})
+    res = explain.explain(log_records or [], {"user_script": info.get("user_script"), "source": info.get("source"),
+                                              "script_from_ui": info.get("script_from_ui")})
     if res["state"] == "running" and tasks.lookup_stage(task_id) == tasks.CANCEL_STAGE:
         res["state"], res["summary"] = "cancelled", "已取消。"
     with st.expander("日志解读：每一步在做什么、为什么、要多久、常见出错原因", expanded=True):
