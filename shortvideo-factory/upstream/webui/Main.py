@@ -1302,6 +1302,9 @@ def _render_task_table(filtered_tasks, key_prefix):
         st.info(tr("No Tasks Match Filter"))
         return
 
+    if svf_webui and any(tm.is_task_busy(t) or _task_state_filter_key(t) == "processing" for t in filtered_tasks):
+        # [补丁 P7] 说明为什么暂时不能删
+        st.caption("「生成中」的任务不能直接删除：先点那一行最右边的 ⏹「取消」，取消后就能删除。")
     visible_tasks = filtered_tasks[:12]
     list_height = min(390, max(96, len(visible_tasks) * 58))
     with st.container(height=list_height, border=False):
@@ -1332,8 +1335,6 @@ def _render_task_table(filtered_tasks, key_prefix):
                 row_cols[1].write(_format_task_time(task["mtime"]))
                 row_cols[2].write(_format_task_subject(task["subject"]))
                 row_cols[3].write(f"{task['progress']}%")
-                if svf_webui and is_busy:  # [补丁 P7] 说明为什么暂时不能删
-                    row_cols[2].caption("正在生成，不能删除；要删除请先点右边的「取消」")
 
                 action_cols = row_cols[4].columns(
                     4,
@@ -8457,6 +8458,8 @@ def _render_generation_controls(
 
         st.session_state["current_generation_task_id"] = task_id
         logger.info(f"WebUI generation task submitted: task_id={task_id}")
+        if svf_webui:  # [补丁 P7] 重新渲染一次，让「生成视频」按钮立即变成灰色的「生成中…」
+            st.rerun()
 
     _render_current_generation_task()
     return start_button

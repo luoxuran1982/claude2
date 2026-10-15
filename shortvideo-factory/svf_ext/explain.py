@@ -274,7 +274,7 @@ def duration_line(extra: dict) -> str:
         parts.append(f"目标时长 {int(t)} 秒" + (f"（按约 {extra['chars_per_second']:.1f} 字/秒，请大模型写约 {extra['target_chars']} 字）"
                                               if extra.get("target_chars") and extra.get("chars_per_second") else ""))
     if a:
-        s = f"实际配音 {float(a):.1f} 秒"
+        s = f"实际配音 {float(a):.1f} 秒" + (f"（{extra['audio_note']}）" if extra.get("audio_note") else "")
         if extra.get("script_chars"):
             s += f"（文案 {extra['script_chars']} 字，约 {extra['script_chars'] / max(float(a), 0.1):.1f} 字/秒）"
         if t:

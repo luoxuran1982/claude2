@@ -220,8 +220,8 @@ def voice_language_warning(text: str, voice_name: str, tts_server: str = "azure-
     if tts_server and tts_server not in EDGE_SERVERS:
         return None
     voice = (voice_name or "").strip()
-    if not voice or not re.match(r"^[a-z]{2,3}-[A-Za-z]{2,4}", voice):
-        return None
+    if not voice or not re.match(r"^[a-z]{2,3}-[A-Za-z]{2,4}", voice) or voice.lower().startswith("no-voice"):
+        return None   # 1.0.3：选「无配音」（no-voice）时不提醒
     lang = text_language(text)
     if (video_language or "").lower().startswith("zh"):
         lang = "zh"

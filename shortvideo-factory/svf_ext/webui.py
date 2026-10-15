@@ -168,7 +168,7 @@ def render_open_failure(st, where: str) -> None:
     if not res:
         return
     with st.container(border=True):
-        st.error(f"没能打开文件夹：{res['error']}")
+        st.error(f"没能打开文件夹。原因：{res['error']}")
         st.caption("可以复制下面的完整路径，粘贴到资源管理器（Windows）的地址栏，或访达「前往 → 前往文件夹」（macOS）里打开。")
         st.code(res["path"], language=None)
         st.markdown(copy_button_html(res["path"]), unsafe_allow_html=True)
@@ -299,8 +299,17 @@ def install_duration_hooks() -> None:
                     d = _task_dir(task_id)
                     lang = duration.language_of(video_script, getattr(params, "video_language", ""))
                     info = dict(duration.read_task(d))
+                    note = ""
+                    try:
+                        from app.services import voice as voice_service
+                        if voice_service.is_no_voice(getattr(params, "voice_name", "")):
+                            note = "无配音：按文案长度估算的静音时长"
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if getattr(params, "custom_audio_file", ""):
+                        note = "用的是你上传的配音"
                     info.update(duration.record_actual(d, video_script, float(audio_duration), lang,
-                                                       getattr(params, "voice_rate", 1.0)))
+                                                       getattr(params, "voice_rate", 1.0), learn=not note, note=note))
                     logger.info(duration.summary_line(info))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"记录实际配音时长失败：{exc}")
@@ -372,7 +381,7 @@ def _task_info(task_id: str) -> dict:
 
 
 def explain_markdown(res: dict, info: dict) -> str:
-    out = []
+    blocks = []
     dl = explain.duration_line(info)
     for k, s in enumerate(res["steps"], 1):
         head = f"{STATUS_ICON[s.status]} **{k}. {s.title}**　{STATUS_TEXT[s.status]}"
@@ -380,29 +389,30 @@ def explain_markdown(res: dict, info: dict) -> str:
             el = s.elapsed(res["last_time"])
             head += f" · {s.start_time[11:]} 开始" + (f" · 用时 {el:.0f} 秒" if el is not None else "")
             head += f" · 原始日志第 {s.start_line} 行起"
-        out.append(head)
         if s.status == "pending":
+            blocks.append(head)
             continue
         if s.status == "skipped":
-            out.append(f"　　{_md(s.what)}")
+            blocks.append(head + f"  \n{_md(s.what)}")
             continue
-        out.append(f"　　**在做什么**：{_md(s.what)}  \n　　**为什么**：{_md(s.why)}  \n"
-                   f"　　**正常要多久**：{_md(s.typical)}  \n　　**出错通常是因为**：{_md(s.errors)}")
+        body = (f"**在做什么**：{_md(s.what)}  \n**为什么**：{_md(s.why)}  \n"
+                f"**正常要多久**：{_md(s.typical)}  \n**出错通常是因为**：{_md(s.errors)}")
         if s.key == "audio" and dl:
-            out.append(f"　　**时长**：{_md(dl)}")
+            body += f"  \n**时长**：{_md(dl)}"
         notes = s.notes
         if len(notes) > 10:
             notes = notes[:3] + [(None, "", f"…（中间 {len(notes) - 8} 条略）")] + notes[-5:]
-        for line, t, text in notes:
-            where = f"第 {line} 行 · {t[11:]}　" if line else ""
-            out.append(f"　　- {where}{_md(text)}")
-    return "\n\n".join(out)
+        items = "\n".join(f"- {('第 %s 行 · %s　' % (line, t[11:])) if line else ''}{_md(text)}" for line, t, text in notes)
+        blocks.append(head + "\n\n" + body + ("\n\n" + items if items else ""))
+    return "\n\n---\n\n".join(blocks)
 
 
 def render_task_insights(st, task_id: str, log_records: list) -> None:
     """生成页：原始日志上方的「日志解读」和「大模型调用记录」。原始日志本身不动（只加了行号，方便对照）。"""
     info = _task_info(task_id)
     res = explain.explain(log_records or [], {"user_script": info.get("user_script"), "source": info.get("source")})
+    if res["state"] == "running" and tasks.lookup_stage(task_id) == tasks.CANCEL_STAGE:
+        res["state"], res["summary"] = "cancelled", "已取消。"
     with st.expander("日志解读：每一步在做什么、为什么、要多久、常见出错原因", expanded=True):
         st.markdown(f"**{_md(res['summary'])}**")
         dl = explain.duration_line(info)

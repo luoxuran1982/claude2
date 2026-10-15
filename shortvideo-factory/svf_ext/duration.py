@@ -140,17 +140,18 @@ def write_task(task_dir, data: dict) -> None:
 
 
 def record_actual(task_dir, script: str, audio_seconds: float, lang: str, voice_rate: float = 1.0,
-                  stats_path: Path | None = None) -> dict:
-    """出片后记下实际字数和配音时长；同时更新实测语速（只记语速 1.0 附近的，换算回 1.0 倍）。"""
+                  stats_path: Path | None = None, learn: bool = True, note: str = "") -> dict:
+    """出片后记下实际字数和配音时长；learn 时同时更新实测语速（换算回 1.0 倍语速）。
+    无配音、上传自己的配音时 learn=False：那不是朗读速度。"""
     units = count_units(script, lang)
     info = {"actual_seconds": round(float(audio_seconds or 0), 2), "script_chars": units, "lang": lang,
-            "unit": unit_name(lang)}
+            "unit": unit_name(lang), "audio_note": note}
     write_task(task_dir, info)
     try:
         rate = float(voice_rate or 1.0)
     except (TypeError, ValueError):
         rate = 1.0
-    if audio_seconds and audio_seconds > 3 and units >= 20 and rate > 0:
+    if learn and audio_seconds and audio_seconds > 3 and units >= 20 and rate > 0:
         cps = units / float(audio_seconds) / rate
         lo, hi = CPS_RANGE.get(lang, (1.0, 8.0))
         if lo <= cps <= hi:
@@ -175,7 +176,8 @@ def summary_line(info: dict) -> str:
         parts.append(f"目标时长 {info['target_seconds']} 秒（请大模型写约 {info.get('target_chars')} {info.get('unit', '字')}）")
     if info.get("actual_seconds"):
         a = float(info["actual_seconds"])
-        s = f"实际配音 {a:.1f} 秒，文案 {info.get('script_chars', 0)} {info.get('unit', '字')}"
+        s = f"实际配音 {a:.1f} 秒" + (f"（{info['audio_note']}）" if info.get("audio_note") else "") + \
+            f"，文案 {info.get('script_chars', 0)} {info.get('unit', '字')}"
         if info.get("target_seconds"):
             d = a - float(info["target_seconds"])
             s += f"，比目标{'长' if d > 0 else '短'} {abs(d):.0f} 秒"

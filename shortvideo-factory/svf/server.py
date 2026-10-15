@@ -282,7 +282,7 @@ class OpenPathHandler(Base):
             self.state.opener(str(target))
         except Exception as exc:  # noqa: BLE001
             log.warning("打开文件夹失败：%s，%s", target, exc)
-            return self.send_json({"ok": False, "error": f"系统没能打开文件夹：{type(exc).__name__}: {exc}",
+            return self.send_json({"ok": False, "error": f"调用系统打开失败（{type(exc).__name__}: {exc}）",
                                    "path": str(target)}, 500)
         log.info("已请求系统打开文件夹：%s", target)
         self.send_json({"ok": True, "path": str(target), "opened": True})

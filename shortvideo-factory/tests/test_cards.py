@@ -366,6 +366,22 @@ class OfflineTaskTest(unittest.TestCase):
         res, r = self.run_check("", "tasks_check.py")
         self.assertTrue(res["ok"], res)
 
+    def test_llm_call_records_and_target_duration(self):
+        """大模型调用记录（假 OpenAI 兼容接口）、提示词里的目标时长、记录里没有钥匙，见 tests/llm_check.py。"""
+        res, r = self.run_check("", "llm_check.py")
+        self.assertTrue(res["ok"], res)
+
+    def test_fast_path_long_script_with_bgm(self):
+        """知识卡片快速通道：约 47 秒的长文案 + 背景音乐，一次合成，竖屏 1080×1920、有声音。"""
+        res, r = self.run_check("knowledge_cards", "cards_task_check.py", "--long", "--bgm")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["size"], [1080, 1920])
+        self.assertGreater(res["duration"], 40)
+        out = r.stdout + r.stderr
+        self.assertIn("知识卡片快速通道：成片", out)
+        self.assertNotIn("## combining video", out)          # 不再经过上游的「处理片段」「拼接」
+        self.assertNotIn("final video render", out)
+
 
 class TaskGuardTest(unittest.TestCase):
     """svf_ext/tasks.py 里不依赖上游的部分。"""

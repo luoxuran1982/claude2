@@ -6,7 +6,7 @@ upstream/ 里的 MoneyPrinterTurbo 完成（Streamlit WebUI 作为子进程运�
 
 APP_NAME = "AI 短视频工厂"
 APP_ID = "ShortVideoFactory"
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 # 上游来源（升级上游时同步修改，并更新 UPSTREAM.md）
 UPSTREAM_NAME = "MoneyPrinterTurbo"

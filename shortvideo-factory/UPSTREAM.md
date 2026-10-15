@@ -1,8 +1,8 @@
 ---
 author: Claude
 created: 2026-10-13
-updated: 2026-10-14
-version: 1.0.2
+updated: 2026-10-15
+version: 1.0.3
 tags: [Claude, AI 短视频工厂, 上游, MoneyPrinterTurbo]
 ---
 
@@ -42,10 +42,25 @@ tags: [Claude, AI 短视频工厂, 上游, MoneyPrinterTurbo]
 | P2 | `app/utils/utils.py` | `storage_dir()`、`font_dir()`、`song_dir()` 分别优先取 `MPT_STORAGE_DIR`、`MPT_FONT_DIR`、`MPT_SONG_DIR` | 生成的视频、素材缓存、用户自己放的字体和音乐都放用户数据目录，升级重装不丢 |
 | P3 | `webui/Main.py` | 界面里的字体、音乐目录改用 `utils.font_dir()` / `utils.song_dir()`（原来写死 `resource/fonts`）；「打开任务目录」用 `utils.task_dir()`（原来写死 `storage/tasks`）；默认字幕字体可由 `MPT_DEFAULT_FONT` 指定 | 和 P2 保持一致；微软雅黑不随包分发后，「恢复默认」要落到存在的开源字体上 |
 | P4 | `webui/i18n/zh.json` | 9 个仍是英文的标签改成中文：Base Url → 接口地址（Base URL），Account ID → 账号 ID，以及 VoxCPM / Chatterbox / Kokoro / OFox / MuAPI 的 Base URL、MiniMax TTS Endpoint / Model；1.0.2 起，「设置 → 素材来源」里 Pexels 钥匙标签的「推荐使用」改到 Pixabay，Pexels 注明「目前暂停发放新钥匙」 | 界面全中文的要求；只改译文，不改键名；Pexels 暂停发放新钥匙后，原来「Pexels 推荐使用、Pixabay 备用」的说法会误导新用户 |
-| P5 | `webui/Main.py` | 文件开头尝试导入外壳扩展 `svf_ext.webui`（导入不到就是 `None`，以下各处都退回原行为）。① `VIDEO_SOURCE_GROUPS` 加「程序生成」组，视频来源下拉多一组（知识讲解卡片、混合），标签和说明、卡片配色由 `svf_ext` 提供；提交前的「有效来源」名单加上这三个值；② 「打开任务目录」「打开缓存目录」两处原来的 `webbrowser.open("file://…")`、`webbrowser.open(Path(…).as_uri())` 改成新函数 `_open_local_path`（调用 `svf_ext.desktop.open_path`：Windows `os.startfile`、macOS `open`、Linux `xdg-open`）；③ 「设置 → 素材来源」里 Pexels / Pixabay 钥匙输入框下面加格式提示，Coverr 下面加「素材下载代理」输入框；④ 选配音声音后、点「生成视频」时，声音和文案语言不一致就提醒；⑤ 试听失败「配音服务未返回试听音频」后面接上按日志判断的中文原因 | ① 用户讲知识类主题时素材库只有风景动物，要有不依赖素材的来源；② 用户反馈：Windows 上点「打开目录」没有任何反应（`webbrowser` 打开 `file://` 在 Windows 上静默失败）；③ 用户把 Pixabay 钥匙填进 Pexels 栏、Pexels 暂停发新钥匙；需要代理才能下载素材又不想开系统代理；④⑤ 用户选了 af-ZA、zu-ZA 声音导致「No audio was received」，原提示一律先说 403 |
+| P5 | `webui/Main.py` | 文件开头尝试导入外壳扩展 `svf_ext.webui`（导入不到就是 `None`，以下各处都退回原行为）。① `VIDEO_SOURCE_GROUPS` 加「程序生成」组，视频来源下拉多一组（知识讲解卡片、混合），标签和说明、卡片配色由 `svf_ext` 提供；提交前的「有效来源」名单加上这三个值；② 「打开任务目录」「打开缓存目录」两处原来的 `webbrowser.open("file://…")`、`webbrowser.open(Path(…).as_uri())` 改成新函数 `_open_local_path`（1.0.2 调用 `svf_ext.desktop.open_path`：Windows `os.startfile`、macOS `open`、Linux `xdg-open`；1.0.3 起由 P7 改为请外壳主进程打开）；③ 「设置 → 素材来源」里 Pexels / Pixabay 钥匙输入框下面加格式提示，Coverr 下面加「素材下载代理」输入框；④ 选配音声音后、点「生成视频」时，声音和文案语言不一致就提醒；⑤ 试听失败「配音服务未返回试听音频」后面接上按日志判断的中文原因 | ① 用户讲知识类主题时素材库只有风景动物，要有不依赖素材的来源；② 用户反馈：Windows 上点「打开目录」没有任何反应（`webbrowser` 打开 `file://` 在 Windows 上静默失败）；③ 用户把 Pixabay 钥匙填进 Pexels 栏、Pexels 暂停发新钥匙；需要代理才能下载素材又不想开系统代理；④⑤ 用户选了 af-ZA、zu-ZA 声音导致「No audio was received」，原提示一律先说 403 |
 | P6 | `app/services/task.py` | 文件开头尝试导入 `svf_ext.pipeline`（导入不到就是 `None`）。① `_SUPPORTED_VIDEO_SOURCES` 加上三个程序生成来源；② 纯「知识讲解卡片」不调用大模型生成搜索关键词（`generate_terms`）；③ `get_video_materials` 在 local / loomloom 分支之后加一个分支：来源是程序生成组时调用 `svf_pipeline.prepare_materials`（这时配音和字幕已经生成，按它们的时间分页画图，返回一个 mp4 交回上游后续流程）；④ 配音失败 `failed to synthesize audio; …`、素材下载失败 `failed to download video materials from …` 两句英文原文不变，后面接上中文原因 | ③ 讲解页要跟着配音和字幕的时间走，只有素材这一步之后才知道时间；其余流程（转场、字幕、配音、背景音乐、拼接）原样复用；② 少一次大模型调用、少一个失败点；④ 原因只在日志里，界面上看不到 |
+| P7 | `webui/Main.py` | 1.0.3，都在「能导入 `svf_ext.webui`」时才生效：① 「生成视频」按钮：有任务在生成（`svf_webui.generation_busy()`）时显示「生成中…」并 `disabled`，下面一行说明；提交前调用 `svf_webui.claim_generation`，不放行就提示原因、不提交；提交后记下目标时长（`note_submission`）、整页重新渲染一次；提交失败撤销登记；② 任务管理：`_collect_task_summaries` 开头调用 `reconcile_tasks`（残留任务标「已中断」）；`_task_state_filter_key` 让「已取消」「已中断」归入「失败」；状态列显示「已取消」「已中断」；生成中的任务在删除按钮的位置显示 ⏹「取消」（`cancel_task`），列表上方说明为什么暂时不能删；③ `_open_local_path` 改为 `svf_webui.open_folder`（经外壳主进程打开），`_open_task_path` 文件夹不存在时不再静默返回；任务管理和「缓存管理」打开失败时显示原因、完整路径和「复制路径」（`render_open_failure`）；④ `_render_generation_logs`：原始日志上方加「日志解读」和「大模型调用记录」（`render_task_insights`），原始日志加行号；⑤ 「文案设置」里「生成视频脚本的语言」下面加「目标时长（秒）」（`render_target_duration`） | ① 用户连按三次「生成视频」起了 3 个任务，多出来的「生成中 0%」删不掉、停不下来；② 上游没有取消功能，删除按钮对生成中的任务是灰的、不说明原因；③ 1.0.2 在后台进程里 `os.startfile` 打开文件夹在 Windows 上仍然没反应（原因见下面「1.0.3」）；④⑤ 用户要对照日志学习、要能设定视频长度 |
+| P8 | `app/services/task.py` | 1.0.3：`generate_final_videos` 开头调用 `svf_pipeline.fast_final_videos`；它返回结果（素材这一步留下了知识卡片快速通道的分页计划）就直接返回，否则（库存视频等其他来源）上游原流程不变 | 知识卡片出片太慢（51 秒竖屏最终渲染 5 分钟以上）：讲解视频不该再走为库存素材设计的「处理片段 → 拼接 → MoviePy 逐帧合成」，改为 FFmpeg 一次合成 |
 
-不设环境变量时，P1–P3 的行为和上游完全一样（从源码直接 `streamlit run webui/Main.py` 照常可用）。P5、P6 只在能导入外壳扩展 `svf_ext` 时生效：应用里由生成界面后台的入口 `svf_child.py` 把它加到 `sys.path`；单独运行上游、或跑上游自带测试时导入不到，行为和上游完全一样。源码里每处改动都有「[补丁 P5]」「[补丁 P6]」注释。
+不设环境变量时，P1–P3 的行为和上游完全一样（从源码直接 `streamlit run webui/Main.py` 照常可用）。P5–P8 只在能导入外壳扩展 `svf_ext` 时生效：应用里由生成界面后台的入口 `svf_child.py` 把它加到 `sys.path`；单独运行上游、或跑上游自带测试时导入不到，行为和上游完全一样。源码里每处改动都有「[补丁 P5]」…「[补丁 P8]」注释。
+
+### 1.0.3：新功能尽量「包一层」，少改上游
+
+| 功能 | 外壳模块 | 怎样接到上游 | 为什么这样接 |
+| --- | --- | --- | --- |
+| 防重复提交、取消、已中断 | `svf_ext/tasks.py` | 导入 `svf_ext.webui` 时 `tasks.install()` 把模块里的 `webui_task.submit_generation`、`webui_task._run_generation`、`task.generate_script / generate_terms / generate_audio / generate_subtitle / get_video_materials / generate_final_videos`、`task._stage_progress_reporter` 换成「先检查 / 登记，再调原函数」的包装，并包住状态后端 `sm.state.update_task / patch_task`（已取消的任务不再被写回）；界面上的按钮、取消、状态文字由 P7 调用 | 上游按名字调用这些模块级函数，换掉模块属性就能接上，不用改流水线源码；取消只能在线程里「到点检查」+ 结束 FFmpeg 子进程，Python 线程不能强行终止 |
+| 大模型调用记录 | `svf_ext/llmlog.py` | `llmlog.install()` 包住 `llm._generate_response`（所有大模型调用的必经之路）、`llm.generate_script / generate_terms / generate_social_metadata / test_connection` 和 `task.generate_script / generate_terms`（标出哪一步、哪个任务）；调用期间临时接住 OpenAI SDK `chat.completions.create` 的返回值取原始 JSON 和 token 用量（只读） | 不改上游源码；写记录前去掉所有钥匙 |
+| 目标时长 | `svf_ext/duration.py` | 包住 `llm.build_script_prompt`（在末尾加字数要求）和 `task.generate_audio`（记下实际时长）；控件由 P7 放进界面 | 同上 |
+| 日志解读 | `svf_ext/explain.py` | 只读上游 `webui_task.get_task_logs` 的快照；位置由 P7 决定 | — |
+| 打开目录 | `svf/server.py` `/api/open-path`、`svf_ext/desktop.py` | P7 调用 `svf_webui.open_folder` → 本机 HTTP 请启动器打开 | 见下 |
+| 知识卡片快速通道 | `svf_ext/fastcards.py`、`pipeline.py` | P6 的素材分支只留下分页计划，P8 在 `generate_final_videos` 开头接管 | 必须跳过上游的处理片段、拼接和 MoviePy 合成，只能在入口处分流 |
+
+**「打开目录」1.0.2 为什么仍然无效**：1.0.2 的代码确实走到了（同一个包里的知识卡片来源可用，说明 `svf_ext` 加载成功），`os.startfile` 也没报错（报错会在 `webui.log` 留下「打开目录失败」）。发出请求的是生成界面后台：启动器用 `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` 启动、放在作业对象里的无窗口后台进程，按钮回调在 Streamlit 工作线程上（没有初始化 COM）。打开文件夹要由资源管理器经 COM 委托开新窗口、并抢到前台，从这样的进程发出时静默失败或窗口被压在应用窗口后面；「播放」是直接启动播放器程序，所以正常。1.0.3 改为子进程经本机 HTTP（`POST /api/open-path`，带令牌）请启动器打开：启动器拥有应用窗口、是前台进程，在 Windows 上另起线程先 `CoInitializeEx`、`AllowSetForegroundWindow` 再 `os.startfile`，失败退回 `explorer.exe`；只允许数据目录之内的路径。（这是按代码和 Windows 机制的推断，容器里不能复现，待用户在 Windows 上验收。）
 
 ### 1.0.2：知识讲解卡片等功能放在外壳扩展 `svf_ext/`
 
@@ -95,7 +110,7 @@ tags: [Claude, AI 短视频工厂, 上游, MoneyPrinterTurbo]
 
 1. 克隆上游新版本，记下 commit；用 `python packaging/upstream_diff.py <旧版上游目录>` 确认当前补丁（或直接看本文件和 `upstream-patches.diff`）。
 2. 用新版源码整体替换 `upstream/`（同样删掉上表的字体和音乐），先单独提交一次「原样副本」。
-3. 按上表 P1–P6 逐条重新打补丁（P5、P6 依赖上游的 `VIDEO_SOURCE_GROUPS`、`_SUPPORTED_VIDEO_SOURCES`、`get_video_materials`、`open_task_folder` 等，上游改名或改结构时按「为什么」重新找接入点；跑 `tests/test_cards.py` 的离线任务检查确认接通）（上游改了同一处时，按「为什么」一栏的目的重新实现），再提交。
+3. 按上表 P1–P8 逐条重新打补丁（P5–P8 依赖上游的 `VIDEO_SOURCE_GROUPS`、`_SUPPORTED_VIDEO_SOURCES`、`get_video_materials`、`generate_final_videos`、`open_task_folder`、`_render_task_table`、`_render_generation_logs`、`_render_generation_controls` 等；1.0.3 的外壳包装还依赖 `webui_task.submit_generation / _run_generation`、`llm._generate_response / build_script_prompt`、`task.generate_*`、`task._stage_progress_reporter` 这些名字，上游改名时 `svf_ext` 会在 `webui.log` 里记「外壳扩展没有接上上游」，跑 `tests/tasks_check.py`、`tests/llm_check.py` 确认，上游改名或改结构时按「为什么」重新找接入点；跑 `tests/test_cards.py` 的离线任务检查确认接通）（上游改了同一处时，按「为什么」一栏的目的重新实现），再提交。
 4. 运行 `python packaging/make_runtime_requirements.py`（需要 uv）重新生成依赖清单；检查新版本有没有新增大体积的可选依赖；逐条检查 `OVERRIDES`：上游已跟上的删掉，没跟上的确认依赖要求仍满足。
 5. 改 `svf/__init__.py` 里的 `UPSTREAM_COMMIT`、`UPSTREAM_VERSION`，递增应用版本号；更新本文件和 docs。
 6. 跑 `python tests/run_upstream_tests.py` 和外壳测试，推送后看 CI 的冒烟测试；在容器里用 `tests/ui_check.py` 检查界面是否还有新冒出来的英文（Streamlit 升级常会改提示文字，需要在 `svf/web/inject.js` 的对照表里补上）。
