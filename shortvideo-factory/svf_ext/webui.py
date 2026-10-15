@@ -9,14 +9,23 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 
-from . import desktop
+from . import desktop, duration, explain, llmlog, tasks
 from . import (CARD_GROUP_LABEL, CARD_SOURCE_LABELS, CARD_SOURCES, DEFAULT_THEME, HYBRID_STOCK, KNOWLEDGE_CARDS,
                THEME_CONFIG_KEY, THEME_LABELS, hints)
 from .desktop import open_path  # noqa: F401  （1.0.2 的接口，保留兼容）
 
 hints.install_log_sink()
+def _install_hooks() -> None:
+    """接到上游（只装一次）：防重复提交 / 取消 / 残留任务（tasks）、大模型调用记录（llmlog）、目标时长（本模块）。"""
+    tasks.install()
+    llmlog.install()
+    install_duration_hooks()
+
+
+
 
 __all__ = ["open_folder", "render_open_failure", "CARD_GROUP_LABEL", "CARD_SOURCE_LABELS", "CARD_SOURCES", "HYBRID_SOURCES", "open_path", "render_source_options",
            "render_key_hint", "render_material_proxy", "render_voice_language_warning", "tts_failure_hint",
@@ -164,3 +173,284 @@ def render_open_failure(st, where: str) -> None:
         st.code(res["path"], language=None)
         st.markdown(copy_button_html(res["path"]), unsafe_allow_html=True)
         st.button("知道了", key=f"svf_open_fail_ok_{where}", on_click=_dismiss_open_failure, args=(st,))
+
+
+# ---------------------------------------------------------------- 防重复提交、取消、残留任务（tasks.py）
+
+BUSY_LABEL = tasks.BUSY_LABEL
+TASK_LABELS = {tasks.CANCEL_STAGE: "已取消", tasks.INTERRUPT_STAGE: "已中断"}
+
+
+def session_id() -> str:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx()
+        return ctx.session_id if ctx else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def generation_busy() -> str | None:
+    """有任务正在生成或排队时返回它的 ID（「生成视频」按钮据此置灰）。"""
+    return tasks.busy_task()
+
+
+def render_busy_note(st, busy_id: str) -> None:
+    progress = ""
+    try:
+        from app.services import state as sm
+        rec = sm.state.get_task(busy_id) or {}
+        progress = f"（进度 {int(rec.get('progress', 0) or 0)}%）"
+    except Exception:  # noqa: BLE001
+        pass
+    st.caption(f"已有任务在生成{progress}，完成后才能再生成，避免同时跑几个任务。要停下它，打开顶部「任务管理」点「取消」。")
+
+
+def claim_generation(task_id: str, params) -> str | None:
+    """点「生成视频」后、提交前的最后检查：放行返回 None，否则返回原因（同时点的几次只放行一个；同参数 90 秒内只保留一个）。"""
+    return tasks.claim(task_id, params, session_id())
+
+
+def release_generation(task_id: str) -> None:
+    tasks.release(task_id)
+
+
+def reconcile_tasks(state_obj, active: dict, pending_id) -> None:
+    try:
+        tasks.reconcile(state_obj, active, pending_id)
+    except Exception as exc:  # noqa: BLE001
+        from loguru import logger
+        logger.warning(f"检查残留任务失败：{exc}")
+
+
+def task_status(task: dict) -> str | None:
+    return tasks.status_of(task)
+
+
+def task_label(task: dict, default: str) -> str:
+    return TASK_LABELS.get(tasks.status_of(task) or "", default)
+
+
+def task_filter_key(task: dict) -> str | None:
+    """已取消、已中断归到「失败」标签页，不算生成中，可以删除。"""
+    return "failed" if tasks.status_of(task) else None
+
+
+def cancel_task(task_id: str) -> str:
+    return tasks.cancel(task_id)
+
+
+# ---------------------------------------------------------------- 目标时长（duration.py）
+
+def _target_from_config() -> int:
+    try:
+        from app.config import config
+        return int(config.ui.get(duration.CONFIG_KEY, 0) or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _voice_rate_from_config() -> float:
+    try:
+        from app.config import config
+        return float(config.ui.get("voice_rate", 1.0) or 1.0)
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
+def _task_dir(task_id: str):
+    from pathlib import Path
+    from app.utils import utils
+    return Path(utils.task_dir()) / task_id
+
+
+def install_duration_hooks() -> None:
+    """① 写文案的提示词（llm.build_script_prompt）末尾加上目标时长换算的字数；② 配音完成后记下实际时长并写一行日志。"""
+    from loguru import logger
+    from app.services import llm
+    from app.services import task as task_service
+
+    if not getattr(llm.build_script_prompt, "_svf_duration", False):
+        orig_build = llm.build_script_prompt
+
+        def build_script_prompt(video_subject, language="", *args, **kwargs):
+            prompt = orig_build(video_subject, language, *args, **kwargs)
+            ctx = llmlog._ctx.get() or {}
+            p = None
+            if ctx.get("task_id"):
+                info = duration.read_task(_task_dir(ctx["task_id"]))
+                if info.get("target_seconds"):
+                    p = info
+            if p is None:
+                p = duration.plan(_target_from_config(), duration.language_of(video_subject, language),
+                                  _voice_rate_from_config())
+            return prompt + duration.prompt_addition(p) if p else prompt
+        build_script_prompt._svf_duration = True
+        build_script_prompt.__wrapped__ = orig_build
+        llm.build_script_prompt = build_script_prompt
+
+    fn = task_service.generate_audio
+    if not getattr(fn, "_svf_duration", False):
+        def generate_audio(task_id, params, video_script, *args, **kwargs):
+            out = fn(task_id, params, video_script, *args, **kwargs)
+            try:
+                audio_file, audio_duration = out[0], out[1]
+                if audio_file and audio_duration:
+                    d = _task_dir(task_id)
+                    lang = duration.language_of(video_script, getattr(params, "video_language", ""))
+                    info = dict(duration.read_task(d))
+                    info.update(duration.record_actual(d, video_script, float(audio_duration), lang,
+                                                       getattr(params, "voice_rate", 1.0)))
+                    logger.info(duration.summary_line(info))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"记录实际配音时长失败：{exc}")
+            return out
+        generate_audio._svf_duration = True
+        generate_audio.__wrapped__ = fn
+        task_service.generate_audio = generate_audio
+
+
+def render_target_duration(st, config, params) -> None:
+    """「目标时长（秒）」：30 / 60 / 90 / 120 / 自定义；换算成文案字数写进写文案的提示词。"""
+    current = int(config.ui.get(duration.CONFIG_KEY, 0) or 0)
+    options = list(duration.PRESETS) + [duration.CUSTOM]
+    sel_default = current if current in duration.PRESETS else duration.CUSTOM
+    choice = st.selectbox("目标时长（秒）", options, index=options.index(sel_default), format_func=duration.label,
+                          key="svf_target_seconds_select",
+                          help="按配音语速把时长换算成文案字数，写进给大模型的写文案要求里（中文大约每秒 4–5 个字）。"
+                               "自己写好文案时不改写你的文案，生成后在「日志解读」里对照目标和实际时长。")
+    value = choice
+    if choice == duration.CUSTOM:
+        value = int(st.number_input("自定义目标时长（秒）", min_value=duration.MIN_SECONDS, max_value=duration.MAX_SECONDS,
+                                    value=current if current >= duration.MIN_SECONDS else 45, step=5,
+                                    key="svf_target_seconds_custom"))
+    if value != current:
+        updater = getattr(config, "update_config_nonblocking", None)
+        if updater:
+            updater(config.ui, duration.CONFIG_KEY, value)
+        else:
+            config.ui[duration.CONFIG_KEY] = value
+    p = duration.plan(value, duration.language_of(getattr(params, "video_subject", ""), getattr(params, "video_language", "")),
+                      config.ui.get("voice_rate", 1.0))
+    if p:
+        st.caption(f"约 {p['target_chars']} {p['unit']}（{p['chars_per_second']:.1f} {p['unit'][-1] if p['lang'] == 'zh' else '词'}/秒，"
+                   f"{p['basis']}）。写文案时告诉大模型这个字数；段落数照旧。")
+
+
+def note_submission(task_id: str, params) -> None:
+    """提交时记下这次的目标时长（svf_task.json），并把界面上刚生成的文案调用记录复制进任务。"""
+    try:
+        script = str(getattr(params, "video_script", "") or "")
+        lang = duration.language_of(script or getattr(params, "video_subject", ""), getattr(params, "video_language", ""))
+        info = {"submitted": __import__("time").strftime("%Y-%m-%d %H:%M:%S"), "source": getattr(params, "video_source", ""),
+                "user_script": bool(script.strip())}
+        p = duration.plan(_target_from_config(), lang, getattr(params, "voice_rate", 1.0))
+        info.update(p or {"target_seconds": 0})
+        duration.write_task(_task_dir(task_id), info)
+        if script.strip():
+            llmlog.adopt_ui_calls(task_id, script)
+    except Exception as exc:  # noqa: BLE001
+        from loguru import logger
+        logger.warning(f"记录任务信息失败：{exc}")
+
+
+# ---------------------------------------------------------------- 日志解读、大模型调用记录（生成页，日志上方）
+
+STATUS_ICON = {"done": "✅", "running": "⏳", "failed": "❌", "skipped": "⏭️", "pending": "▫️"}
+STATUS_TEXT = {"done": "完成", "running": "进行中", "failed": "失败", "skipped": "跳过", "pending": "还没开始"}
+
+
+def _md(text) -> str:
+    return re.sub(r"([\\`*_\[\]<>#|~$])", r"\\\1", str(text))
+
+
+def _task_info(task_id: str) -> dict:
+    try:
+        return duration.read_task(_task_dir(task_id))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def explain_markdown(res: dict, info: dict) -> str:
+    out = []
+    dl = explain.duration_line(info)
+    for k, s in enumerate(res["steps"], 1):
+        head = f"{STATUS_ICON[s.status]} **{k}. {s.title}**　{STATUS_TEXT[s.status]}"
+        if s.start_time:
+            el = s.elapsed(res["last_time"])
+            head += f" · {s.start_time[11:]} 开始" + (f" · 用时 {el:.0f} 秒" if el is not None else "")
+            head += f" · 原始日志第 {s.start_line} 行起"
+        out.append(head)
+        if s.status == "pending":
+            continue
+        if s.status == "skipped":
+            out.append(f"　　{_md(s.what)}")
+            continue
+        out.append(f"　　**在做什么**：{_md(s.what)}  \n　　**为什么**：{_md(s.why)}  \n"
+                   f"　　**正常要多久**：{_md(s.typical)}  \n　　**出错通常是因为**：{_md(s.errors)}")
+        if s.key == "audio" and dl:
+            out.append(f"　　**时长**：{_md(dl)}")
+        notes = s.notes
+        if len(notes) > 10:
+            notes = notes[:3] + [(None, "", f"…（中间 {len(notes) - 8} 条略）")] + notes[-5:]
+        for line, t, text in notes:
+            where = f"第 {line} 行 · {t[11:]}　" if line else ""
+            out.append(f"　　- {where}{_md(text)}")
+    return "\n\n".join(out)
+
+
+def render_task_insights(st, task_id: str, log_records: list) -> None:
+    """生成页：原始日志上方的「日志解读」和「大模型调用记录」。原始日志本身不动（只加了行号，方便对照）。"""
+    info = _task_info(task_id)
+    res = explain.explain(log_records or [], {"user_script": info.get("user_script"), "source": info.get("source")})
+    with st.expander("日志解读：每一步在做什么、为什么、要多久、常见出错原因", expanded=True):
+        st.markdown(f"**{_md(res['summary'])}**")
+        dl = explain.duration_line(info)
+        if dl:
+            st.caption(dl)
+        if not log_records:
+            st.caption("还没有日志（设置里关掉了「显示日志」时这里也没有）。")
+        st.markdown(explain_markdown(res, info))
+        st.caption("「第 N 行」对应下面原始日志左边的行号。heartbeat 类的 still running 行只是「还在运行」的报平安。")
+    render_llm_calls(st, task_id)
+    st.caption("原始日志")
+
+
+def render_llm_calls(st, task_id: str) -> None:
+    calls = llmlog.read_task(task_id)
+    label = f"大模型调用记录（{len(calls)} 次，原汁原味）" if calls else "大模型调用记录（这个任务没有调用大模型）"
+    with st.expander(label, expanded=False):
+        if not calls:
+            st.caption("自己写好文案、又用「知识讲解卡片」时，整个任务都不需要大模型。记录文件：任务目录的 llm_calls.jsonl。")
+            return
+        st.caption("每次调用一条：发给模型的完整提示词、模型返回的完整原始输出、耗时、token 用量。API Key 不会出现在记录里。"
+                   "文件在任务目录的 llm_calls.jsonl。")
+        for k, c in enumerate(calls, 1):
+            usage = c.get("usage") or {}
+            tok = (f" · token：输入 {usage.get('prompt_tokens', '?')} / 输出 {usage.get('completion_tokens', '?')} / "
+                   f"合计 {usage.get('total_tokens', '?')}") if usage else " · token 用量：接口没有返回"
+            st.markdown(f"**#{k} {_md(c.get('step_label', ''))}**（第 {c.get('attempt', 1)} 次尝试，"
+                        f"{'成功' if c.get('ok') else '失败'}）· {_md(c.get('provider_label') or c.get('provider') or '?')} / "
+                        f"`{_md(c.get('model') or '?')}` · {c.get('elapsed_seconds', 0):.1f} 秒{tok} · {c.get('time', '')}"
+                        + ("　（在界面上点「生成文案」时调用的）" if c.get("from_ui") else ""))
+            if c.get("base_url"):
+                st.caption(f"接口地址：{c['base_url']}")
+            for m in c.get("messages") or []:
+                st.caption(f"发给模型的 {m.get('role')} 消息（原文）")
+                st.code(m.get("content", ""), language=None, wrap_lines=True)
+            st.caption("模型返回的原始输出" + ("" if c.get("ok") else f"（出错：{c.get('error', '')}）"))
+            st.code(c.get("output", "") or "（空）", language=None, wrap_lines=True)
+            if c.get("raw_response"):
+                st.caption("接口返回的原始 JSON")
+                st.code(json.dumps(c["raw_response"], ensure_ascii=False, indent=2)[:60000], language="json", wrap_lines=True)
+            st.divider()
+
+
+try:   # 导入上游失败时（只跑外壳单元测试）跳过
+    _install_hooks()
+except Exception as _exc:  # noqa: BLE001
+    try:
+        from loguru import logger
+        logger.warning(f"外壳扩展没有接上上游（防重复提交、大模型调用记录、目标时长）：{_exc}")
+    except ImportError:
+        pass

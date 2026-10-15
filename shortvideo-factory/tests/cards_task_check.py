@@ -11,7 +11,7 @@
     python cards_task_check.py <svf_ext 所在目录> [knowledge_cards|hybrid_pixabay] [--long] [--bgm] [--landscape]
 
 --long 用约 50 秒的长文案（用来测出片用时，见 docs/02「知识卡片快速通道」的实测）；--bgm 生成一段本地背景音乐并开启混音；
---landscape 用 16:9 横屏。
+--landscape 用 16:9 横屏；--static 讲解页不缩放平移；--legacy 关掉快速通道（1.0.2 的流程，用来对比用时）。
 
 最后一行输出 RESULT {json}。由 tests/test_cards.py（源码）和 packaging/smoke.py（安装包里的随包 Python）调用。
 """
@@ -74,6 +74,11 @@ def main() -> None:
     from app.utils import utils
 
     voice.tts = fake_tts
+    from app.config import config
+    if "--static" in flags:
+        config.app["svf_card_motion"] = False
+    if "--legacy" in flags:
+        config.app["svf_card_fast"] = False
     task_id = str(uuid.uuid4())
     bgm_type, bgm_file, bgm_volume = "", "", 0.0
     if "--bgm" in flags:

@@ -18,13 +18,15 @@ import math
 import os
 from pathlib import Path
 
-from . import CARD_SOURCES, DEFAULT_THEME, HYBRID_STOCK, KNOWLEDGE_CARDS, THEME_CONFIG_KEY, hints
+from . import CARD_SOURCES, DEFAULT_THEME, HYBRID_STOCK, KNOWLEDGE_CARDS, THEME_CONFIG_KEY, fastcards, hints, tasks
 from .storyboard import Page, build_pages, parse_srt
 
 hints.install_log_sink()
 
-__all__ = ["CARD_SOURCES", "KNOWLEDGE_CARDS", "needs_terms", "prepare_materials", "safe_zone", "tts_failure_hint",
-           "material_failure_hint"]
+__all__ = ["CARD_SOURCES", "KNOWLEDGE_CARDS", "needs_terms", "prepare_materials", "fast_final_videos", "safe_zone",
+           "tts_failure_hint", "material_failure_hint"]
+
+_PLANS: dict = {}     # task_id → 快速通道要用的讲解页（素材这一步算好，最终渲染那一步用）
 
 
 def needs_terms(source: str) -> bool:
@@ -117,6 +119,82 @@ def _stock_clips(task_id, params, video_terms, audio_duration, stock: str, log) 
     return out
 
 
+def _app_flag(key: str, default=True):
+    try:
+        from app.config import config
+        v = config.app.get(key, default)
+    except Exception:  # noqa: BLE001
+        return default
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "off", "no")
+    return bool(v)
+
+
+def use_fast_path(params) -> bool:
+    """知识卡片（和用卡片补齐的混合来源）默认走快速通道。例外：设置里关掉了；背景音乐要由 Sonilo / ElevenLabs
+    按成片画面现做（它们要先拿到一条合成好的画面），这时仍走上游流程。"""
+    if not _app_flag(fastcards.FAST_KEY, True):
+        return False
+    try:
+        from app.services import bgm as bgm_service
+        from app.services import task as task_service
+        providers = getattr(task_service, "_VIDEO_MUSIC_PROVIDERS", {}) or {}
+        if params.bgm_type in providers and bgm_service.should_use_bgm(params.bgm_type, params.bgm_volume):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def fast_final_videos(task_id, params, downloaded_videos, audio_file, subtitle_path, audio_duration, partial_results=None):
+    """[补丁 P8] 上游 generate_final_videos 开头调用：素材这一步留下了快速通道的讲解页时，一次合成成片并返回
+    (成片列表, [], 警告)；否则返回 None，上游照常走 MoviePy 流程。"""
+    plan = _PLANS.pop(task_id, None)
+    if plan is None:
+        if any(str(v).endswith(fastcards.PLAN_FILE) for v in downloaded_videos or []):
+            raise RuntimeError("知识卡片快速通道的讲解页不见了（生成界面后台中途重启过？），请重新生成")
+        return None
+    from loguru import logger as log
+    from app.services import task as task_service
+    from app.utils import utils
+    task_dir = Path(utils.task_dir(task_id))
+    out = task_dir / "final-1.mp4"
+    log.info(f"\n\n## 知识卡片快速通道：一次合成画面、配音、背景音乐和字幕 => {out}")
+    cues = []
+    if subtitle_path and os.path.isfile(subtitle_path):
+        cues = parse_srt(Path(subtitle_path).read_text(encoding="utf-8"))
+    bgm = fastcards.resolve_bgm(params, task_id)
+    log.info(f"知识卡片快速通道：字幕 {len(cues) if params.subtitle_enabled else 0} 条（直接画进画面），"
+             f"背景音乐 {os.path.basename(bgm) if bgm else '不用'}，画面 {plan['W']}×{plan['H']}，"
+             f"{'每页缓慢缩放/平移' if plan['motion'] else '静止画面'}")
+    try:
+        from app.services import video
+        preferred = video._get_configured_video_codec()
+    except Exception:  # noqa: BLE001
+        preferred = ""
+    hw = str(_app_flag_raw(fastcards.HW_KEY, "auto")).strip().lower()
+    res = fastcards.render_final(
+        plan["pages"], cues, params, audio_file, str(out), plan["W"], plan["H"], plan["theme"], plan["keywords"], plan["safe"],
+        bgm_file=bgm, motion=plan["motion"], hw_mode=hw, preferred=preferred,
+        progress=task_service._stage_progress_reporter(task_id, 50, 99), check=lambda: tasks.check(task_id),
+        log=log.info, still_dir=str(task_dir / "knowledge-cards"))
+    finals = fastcards.copy_extra(str(out), int(getattr(params, "video_count", 1) or 1))
+    seconds = plan["pages"][-1].end
+    log.success(f"知识卡片快速通道：成片 {out.name}（{seconds:.1f} 秒，{plan['W']}×{plan['H']}，编码器 {res['codec']}，"
+                f"合成用时 {res['seconds']:.0f} 秒）")
+    if partial_results is not None:
+        partial_results.update(videos=list(finals), combined_videos=[], warnings=[])
+    return finals, [], []
+
+
+def _app_flag_raw(key: str, default):
+    try:
+        from app.config import config
+        return config.app.get(key, default) or default
+    except Exception:  # noqa: BLE001
+        return default
+
+
 def assign_stock(pages: list[Page], clips: list[tuple[str, float]]) -> int:
     """把库存片段按顺序放进普通讲解页（关键词卡、文字卡；片段要比这页长）。标题、要点、对比、流程、数字页保留卡片。返回用了几段。"""
     used = 0
@@ -166,15 +244,23 @@ def prepare_materials(task_id: str, params, video_terms, audio_duration) -> list
                      f"{used} 段放进讲解页，其余 {sum(p.kind != 'stock' for p in pages)} 页用知识卡片补齐。{reason}")
 
         W, H = _resolution(params)
+        (task_dir / "knowledge-cards").mkdir(exist_ok=True)
+        (task_dir / "knowledge-cards" / "storyboard.json").write_text(
+            json.dumps({"keywords": keywords, "pages": [p.to_dict() for p in pages]}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+        if use_fast_path(params):
+            motion = _app_flag(fastcards.MOTION_KEY, True)
+            _PLANS[task_id] = {"pages": pages, "keywords": keywords, "W": W, "H": H, "theme": _theme(),
+                               "safe": safe_zone(params), "motion": motion}
+            plan = fastcards.save_plan(task_dir, pages, keywords, {"W": W, "H": H, "motion": motion})
+            log.success(f"知识卡片快速通道：讲解页已画好（{len(pages)} 页，{pages[-1].end:.1f} 秒），"
+                        "最终渲染一步一次合成画面、配音、背景音乐和字幕，不再经过「处理片段」「拼接」")
+            return [str(plan)]
         out = task_dir / "svf-cards.mp4"
         progress = task_service._stage_progress_reporter(task_id, 40, 50)
         from .render import render_video
         render_video(pages, str(out), W, H, _theme(), keywords, safe_zone(params), progress=progress,
                      still_dir=str(task_dir / "knowledge-cards"))
-        (task_dir / "knowledge-cards").mkdir(exist_ok=True)
-        (task_dir / "knowledge-cards" / "storyboard.json").write_text(
-            json.dumps({"keywords": keywords, "pages": [p.to_dict() for p in pages]}, ensure_ascii=False, indent=2),
-            encoding="utf-8")
         # 整条时间线是一个片段：不能被「最大片段时长」截断，也不能变速，否则画面和配音对不上
         params.video_clip_duration = int(math.ceil(pages[-1].end)) + 1
         params.video_clip_speed = 1.0

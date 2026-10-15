@@ -112,17 +112,77 @@ class _Stock:
         self.proc.wait()
 
 
+def iter_frames(pages: list[Page], W: int, H: int, theme: str = "classroom", keywords=(), safe: str = "bottom",
+                fps: int = FPS, still_dir: str | None = None, workers: int | None = None, motion: bool = True,
+                ffmpeg: str | None = None):
+    """按时间顺序产出整条时间线的每一帧（PIL RGB 图，W×H）。motion=False 时每页不缩放/平移（同一状态的帧完全相同，编码更快）。"""
+    if not pages:
+        raise ValueError("没有可画的讲解页")
+    ffmpeg = ffmpeg or _ffmpeg()
+    W, H = int(W), int(H)
+    cw, ch = (int(round(W * OVERSCAN)), int(round(H * OVERSCAN))) if motion else (W, H)
+    ranges = page_frame_ranges(pages, fps)
+    card_pages = [p for p in pages if p.kind != "stock"]
+    numbering = {id(p): k for k, p in enumerate(card_pages)}
+    workers = workers or max(2, min(8, (os.cpu_count() or 2)))
+    prev_last: Image.Image | None = None
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="svf-cards") as pool:
+        for k, (p, (a, b)) in enumerate(zip(pages, ranges)):
+            nf = b - a
+            if nf <= 0:
+                continue
+            fade_n = min(int(FADE_SECONDS * fps), nf // 3) if prev_last is not None else 0
+            if p.kind == "stock":
+                stock = _Stock(ffmpeg, p.data["path"], W, H, fps, nf / fps)
+                try:
+                    frames = [stock.next() for _ in range(nf)]
+                finally:
+                    stock.close()
+                for j in range(fade_n):
+                    frames[j] = Image.blend(prev_last, frames[j], (j + 1) / (fade_n + 1))
+                yield from frames
+                prev_last = frames[-1]
+                continue
+            idx = numbering[id(p)]
+            kind = motion_for(idx)
+            times = [(a + j) / fps for j in range(nf)]
+            states = sorted({p.visible_at(t) for t in times} | {p.visible_at(p.end)})
+            canvases = {v: cards.render_page(p, cw, ch, theme, idx, len(card_pages), v if p.reveals else 99, keywords, safe)
+                        for v in states}
+            if still_dir:
+                Path(still_dir).mkdir(parents=True, exist_ok=True)
+                last = canvases[states[-1]]
+                (last if last.size == (W, H) else last.resize((W, H), Image.LANCZOS)).save(Path(still_dir) / f"page-{idx + 1:02d}.png")
+
+            def frame(j, p=p, kind=kind, nf=nf, canvases=canvases, times=times, states=states):
+                img = canvases[p.visible_at(times[j])] if p.reveals else canvases[states[-1]]
+                if not motion:
+                    return img
+                box = motion_box(kind, j / max(1, nf - 1), cw, ch)
+                return img.resize((W, H), Image.BILINEAR, box=box)
+
+            batch = max(8, workers * 4)
+            for j0 in range(0, nf, batch):
+                rng = range(j0, min(nf, j0 + batch))
+                frames = list(pool.map(frame, rng)) if motion else [frame(j) for j in rng]
+                for off, fr in enumerate(frames):
+                    j = j0 + off
+                    if j < fade_n:
+                        fr = Image.blend(prev_last, fr, (j + 1) / (fade_n + 1))
+                    yield fr
+                prev_last = frames[-1]
+
+
 def render_video(pages: list[Page], out_path: str, W: int, H: int, theme: str = "classroom", keywords=(),
                  safe: str = "bottom", fps: int = FPS, progress=None, still_dir: str | None = None,
                  workers: int | None = None) -> str:
-    """把讲解页（和库存片段）编码成一个 mp4，返回路径。progress(0–1) 可选。still_dir 给出时把每页的完整画面另存为 PNG。"""
+    """把讲解页（和库存片段）编码成一个不带声音的 mp4，返回路径（1.0.2 的流程：之后交给上游合成；
+    1.0.3 的快速通道见 fastcards.py）。progress(0–1) 可选。still_dir 给出时把每页的完整画面另存为 PNG。"""
     if not pages:
         raise ValueError("没有可画的讲解页")
     ffmpeg = _ffmpeg()
     W, H = int(W), int(H)
-    cw, ch = int(round(W * OVERSCAN)), int(round(H * OVERSCAN))
-    ranges = page_frame_ranges(pages, fps)
-    total_frames = ranges[-1][1]
+    total_frames = page_frame_ranges(pages, fps)[-1][1]
     out_path = str(out_path)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".cards-", suffix=".mp4", dir=str(Path(out_path).parent))
@@ -132,65 +192,20 @@ def render_video(pages: list[Page], out_path: str, W: int, H: int, theme: str = 
                             "-i", "-", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
                             "-r", str(fps), "-movflags", "+faststart", tmp],
                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=err, creationflags=CREATE_NO_WINDOW)
-    card_pages = [p for p in pages if p.kind != "stock"]
-    numbering = {id(p): k for k, p in enumerate(card_pages)}
-    workers = workers or max(2, min(8, (os.cpu_count() or 2)))
     done = 0
-    prev_last: Image.Image | None = None
     try:
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="svf-cards") as pool:
-            for k, (p, (a, b)) in enumerate(zip(pages, ranges)):
-                nf = b - a
-                if nf <= 0:
-                    continue
-                fade_n = min(int(FADE_SECONDS * fps), nf // 3) if prev_last is not None else 0
-                if p.kind == "stock":
-                    stock = _Stock(ffmpeg, p.data["path"], W, H, fps, nf / fps)
-                    try:
-                        frames = [stock.next() for _ in range(nf)]
-                    finally:
-                        stock.close()
-                    for j in range(fade_n):
-                        frames[j] = Image.blend(prev_last, frames[j], (j + 1) / (fade_n + 1))
-                    for fr in frames:
-                        enc.stdin.write(fr.tobytes())
-                    prev_last = frames[-1]
-                    done += nf
-                    if progress:
-                        progress(done / total_frames)
-                    continue
-                idx = numbering[id(p)]
-                kind = motion_for(idx)
-                times = [(a + j) / fps for j in range(nf)]
-                states = sorted({p.visible_at(t) for t in times} | {p.visible_at(p.end)})
-                canvases = {v: cards.render_page(p, cw, ch, theme, idx, len(card_pages), v if p.reveals else 99, keywords, safe)
-                            for v in states}
-                if still_dir:
-                    Path(still_dir).mkdir(parents=True, exist_ok=True)
-                    canvases[states[-1]].resize((W, H), Image.LANCZOS).save(Path(still_dir) / f"page-{idx + 1:02d}.png")
-
-                def frame(j, p=p, kind=kind, nf=nf, canvases=canvases, times=times):
-                    img = canvases[p.visible_at(times[j])] if p.reveals else canvases[states[-1]]
-                    box = motion_box(kind, j / max(1, nf - 1), cw, ch)
-                    return img.resize((W, H), Image.BILINEAR, box=box)
-
-                batch = max(8, workers * 4)
-                for j0 in range(0, nf, batch):
-                    frames = list(pool.map(frame, range(j0, min(nf, j0 + batch))))
-                    for off, fr in enumerate(frames):
-                        j = j0 + off
-                        if j < fade_n:
-                            fr = Image.blend(prev_last, fr, (j + 1) / (fade_n + 1))
-                        enc.stdin.write(fr.tobytes())
-                    prev_last = frames[-1]
-                    done += len(frames)
-                    if progress:
-                        progress(done / total_frames)
+        for fr in iter_frames(pages, W, H, theme, keywords, safe, fps, still_dir, workers, ffmpeg=ffmpeg):
+            enc.stdin.write(fr.tobytes())
+            done += 1
+            if progress and done % 15 == 0:
+                progress(done / total_frames)
         enc.stdin.close()
         code = enc.wait()
         if code != 0:
             err.seek(0)
             raise RuntimeError(f"FFmpeg 编码讲解视频失败（{code}）：{err.read().decode('utf-8', 'replace')[-800:]}")
+        if progress:
+            progress(1.0)
         os.replace(tmp, out_path)
         tmp = ""
         return out_path

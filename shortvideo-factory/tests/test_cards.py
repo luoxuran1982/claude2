@@ -332,13 +332,13 @@ class WiringTest(unittest.TestCase):
 class OfflineTaskTest(unittest.TestCase):
     """上游完整流水线 + 知识卡片，离线跑一个 14 秒的短任务（约 1–2 分钟）。"""
 
-    def run_check(self, source):
+    def run_check(self, source, script="cards_task_check.py", *extra):
         import imageio_ffmpeg
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ, MPT_CONFIG_FILE=str(Path(tmp) / "config.toml"), MPT_STORAGE_DIR=str(Path(tmp) / "storage"),
                        MPT_FONT_DIR=str(ROOT / "fonts"), MPT_SONG_DIR=str(Path(tmp) / "songs"),
                        IMAGEIO_FFMPEG_EXE=imageio_ffmpeg.get_ffmpeg_exe(), PYTHONDONTWRITEBYTECODE="1")
-            r = subprocess.run([sys.executable, str(ROOT / "tests" / "cards_task_check.py"), str(ROOT), source],
+            r = subprocess.run([sys.executable, str(ROOT / "tests" / script), str(ROOT), *([source] if source else []), *extra],
                                cwd=str(ROOT / "upstream"), env=env, capture_output=True, text=True, encoding="utf-8",
                                errors="replace", timeout=900)
             line = next((ln for ln in r.stdout.splitlines() if ln.startswith("RESULT ")), "")
@@ -359,6 +359,66 @@ class OfflineTaskTest(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         self.assertNotIn("stock", res["pages"])
         self.assertIn("全部改用知识卡片", r.stdout + r.stderr)
+
+
+    def test_duplicate_cancel_and_leftover_tasks(self):
+        """防重复提交、取消（结束 FFmpeg、状态不被写回）、残留任务标「已中断」，见 tests/tasks_check.py。"""
+        res, r = self.run_check("", "tasks_check.py")
+        self.assertTrue(res["ok"], res)
+
+
+class TaskGuardTest(unittest.TestCase):
+    """svf_ext/tasks.py 里不依赖上游的部分。"""
+
+    def setUp(self):
+        from svf_ext import tasks
+        self.t = tasks
+        tasks._LIVE.clear()
+        tasks._RECENT.clear()
+        tasks._CANCELLED.clear()
+
+    def test_claim_one_at_a_time_and_duplicates(self):
+        from types import SimpleNamespace as NS
+        t = self.t
+        p = NS(video_subject="逻辑门", video_script="")
+        self.assertIsNone(t.claim("A", p, "s1", now=100))
+        self.assertIn("已有任务在生成", t.claim("B", p, "s1", now=101))        # 连点：只放行第一个
+        self.assertIn("已有任务在生成", t.claim("C", NS(video_subject="别的", video_script=""), "s2", now=101))
+        self.assertEqual(t.busy_task(now=101), "A")
+        t.release("A")
+        self.assertIsNone(t.busy_task(now=102))
+        self.assertIn("刚提交过", t.claim("D", p, "s1", now=130))             # 同会话同参数 90 秒内
+        self.assertIsNone(t.claim("E", p, "s2", now=131))                     # 别的会话不算重复
+        t.release("E")
+        self.assertIsNone(t.claim("F", NS(video_subject="逻辑门 2", video_script=""), "s1", now=132))   # 参数不同
+        t.release("F")
+        self.assertIsNone(t.claim("G", p, "s1", now=100 + t.DUP_WINDOW + 1))  # 过了时间窗
+
+    def test_stale_claim_expires_and_cancelled_not_busy(self):
+        from types import SimpleNamespace as NS
+        t = self.t
+        self.assertIsNone(t.claim("A", NS(x=1), "s", now=0))
+        self.assertIsNone(t.busy_task(now=t.CLAIM_TTL + 1))       # 登记了却没提交（页面运行被打断）
+        self.assertIsNone(t.claim("B", NS(x=2), "s", now=t.CLAIM_TTL + 2))
+        t._CANCELLED.add("B")
+        self.assertIsNone(t.busy_task(now=t.CLAIM_TTL + 3))        # 已取消、后台还在收尾的不挡新任务
+
+    def test_status_from_dir(self):
+        t = self.t
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(t.status_from_dir("x", d))
+            t.write_status("x", "running", Path(d))
+            self.assertEqual(t.status_from_dir("x", d), "interrupted")   # 没人在跑
+            t._LIVE["x"] = {"phase": "running", "since": 0, "session": ""}
+            self.assertIsNone(t.status_from_dir("x", d))
+            t.write_status("x", "cancelled", Path(d))
+            self.assertEqual(t.status_from_dir("x", d), "cancelled")
+            t.write_status("x", "done", Path(d))
+            self.assertIsNone(t.status_from_dir("x", d))
+            self.assertEqual(t.status_of({"task_id": "y", "failed_stage": "cancelled"}), "cancelled")
+            self.assertEqual(ext_webui.task_label({"task_id": "y", "failed_stage": "interrupted"}, "失败"), "已中断")
+            self.assertEqual(ext_webui.task_filter_key({"task_id": "y", "failed_stage": "interrupted"}), "failed")
+            self.assertIsNone(ext_webui.task_filter_key({"task_id": "y", "state": 1, "video_file": "a.mp4"}))
 
 
 if __name__ == "__main__":

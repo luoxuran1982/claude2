@@ -978,6 +978,8 @@ def _task_state_label(state, has_video):
 
 
 def _task_state_filter_key(task):
+    if svf_webui and svf_webui.task_filter_key(task):  # [补丁 P7] 已取消、已中断归入「失败」，不算生成中
+        return svf_webui.task_filter_key(task)
     normalized_state = _normalize_task_state(task.get("state"))
     if normalized_state == const.TASK_STATE_PROCESSING:
         return "processing"
@@ -1051,6 +1053,10 @@ def _scan_history_tasks(limit=30):
 
 
 def _collect_task_summaries(limit=20):
+    if svf_webui:  # [补丁 P7] 「生成中」但后台没在跑的任务（连点残留、重启前没结束的）标成「已中断」
+        svf_webui.reconcile_tasks(
+            sm.state, _active_generation_tasks(), st.session_state.get("pending_generation_task_id")
+        )
     history_tasks = {task["task_id"]: task for task in _scan_history_tasks(limit=50)}
     active_tasks = _active_generation_tasks()
 
@@ -1319,10 +1325,15 @@ def _render_task_table(filtered_tasks, key_prefix):
                     [1.1, 1.7, 3.0, 0.8, 1.6],
                     vertical_alignment="center",
                 )
-                row_cols[0].write(_task_state_label(task["state"], has_video))
+                row_cols[0].write(
+                    svf_webui.task_label(task, _task_state_label(task["state"], has_video))
+                    if svf_webui else _task_state_label(task["state"], has_video)
+                )  # [补丁 P7] 显示「已取消」「已中断」
                 row_cols[1].write(_format_task_time(task["mtime"]))
                 row_cols[2].write(_format_task_subject(task["subject"]))
                 row_cols[3].write(f"{task['progress']}%")
+                if svf_webui and is_busy:  # [补丁 P7] 说明为什么暂时不能删
+                    row_cols[2].caption("正在生成，不能删除；要删除请先点右边的「取消」")
 
                 action_cols = row_cols[4].columns(
                     4,
@@ -1365,6 +1376,20 @@ def _render_task_table(filtered_tasks, key_prefix):
                         _queue_task_restore(task_id)
 
                 with action_cols[3]:
+                    if svf_webui and is_busy and not task.get("cross_post_state"):
+                        # [补丁 P7] 生成中的任务不能直接删：这里换成「取消」，取消后就能删除
+                        if st.button(
+                            "取消",
+                            key=f"cancel_task_{key_prefix}_{task_id}",
+                            use_container_width=True,
+                            icon=":material/stop_circle:",
+                            help="正在生成，不能直接删除：先点这里取消，取消后就能删除",
+                        ):
+                            message = svf_webui.cancel_task(task_id)
+                            _remove_active_generation_task(task_id)
+                            st.toast(message)
+                            st.rerun()
+                        continue
                     delete_label = tr("Delete Task")
                     delete_help = (
                         f"{delete_label} ({tr('Task Status Processing')})"
@@ -2028,6 +2053,11 @@ def render_onboarding_tour():
 
 def _render_generation_logs(task_id):
     """渲染后台任务日志快照，不从工作线程访问 Streamlit 会话状态。"""
+    if svf_webui:  # [补丁 P7] 原始日志上方：「日志解读」和「大模型调用记录」
+        svf_webui.render_task_insights(
+            st, task_id,
+            [] if config.ui.get("hide_log", False) else webui_task.get_task_logs(task_id),
+        )
     if config.ui.get("hide_log", False):
         return
 
@@ -2035,7 +2065,7 @@ def _render_generation_logs(task_id):
     if not log_records:
         return
 
-    st.code("\n".join(log_records))
+    st.code("\n".join(log_records), line_numbers=bool(svf_webui))  # [补丁 P7] 带行号，和日志解读对照
 
 
 def _render_generation_task_snapshot(task_id, task):
@@ -5072,6 +5102,8 @@ def _render_script_settings(panel, params):
             )
             params.video_language = selected_language_code
             _set_runtime_config("ui", "video_language", params.video_language)
+            if svf_webui:  # [补丁 P7] 目标时长（秒）：换算成文案字数写进写文案的提示词
+                svf_webui.render_target_duration(st, config, params)
 
             # 使用带 key 的局部容器限定折叠入口样式，保持 expander 的原生交互，
             # 同时避免样式误伤页面顶部的“基础设置”等其他折叠区域。
@@ -8017,13 +8049,17 @@ def _render_generation_controls(
 
     _render_settings_transfer(params)
 
+    svf_busy_task = svf_webui.generation_busy() if svf_webui else None  # [补丁 P7] 有任务在生成时按钮置灰
     start_button = st.button(
-        tr("Generate Video"),
+        svf_webui.BUSY_LABEL if svf_busy_task else tr("Generate Video"),
         use_container_width=True,
         type="primary",
         key="generate_video_button",
         on_click=_prepare_generation_task,
+        disabled=bool(svf_busy_task),
     )
+    if svf_busy_task:
+        svf_webui.render_busy_note(st, svf_busy_task)
     render_onboarding_tour()
     if start_button:
         _save_runtime_config()
@@ -8383,6 +8419,14 @@ def _render_generation_controls(
                 f"task_id={task_id}, duration={reusable_voice_preview['duration']:.2f}s"
             )
 
+        svf_blocked = svf_webui.claim_generation(task_id, params) if svf_webui else None  # [补丁 P7] 防重复提交
+        if svf_blocked:
+            _remove_active_generation_task(task_id)
+            st.warning(svf_blocked)
+            _render_current_generation_task()
+            return False
+        if svf_webui:  # [补丁 P7] 记下目标时长，并把界面上刚生成文案的大模型调用记录复制进任务
+            svf_webui.note_submission(task_id, params)
         try:
             st.toast(tr("Generating Video"))
             logger.info(tr("Start Generating Video"))
@@ -8406,6 +8450,8 @@ def _render_generation_controls(
                 st.session_state["loomloom_video_client_request_id"] = ""
         except Exception:
             _remove_active_generation_task(task_id)
+            if svf_webui:  # [补丁 P7] 提交失败，撤销防重复登记
+                svf_webui.release_generation(task_id)
             st.error(tr("Video Generation Failed"))
             st.stop()
 

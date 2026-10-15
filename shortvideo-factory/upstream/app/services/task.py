@@ -987,6 +987,13 @@ def generate_final_videos(
     *, partial_results: dict | None = None,
 ):
     """Record completed outputs even if a later clip raises before returning."""
+    if svf_pipeline:  # [补丁 P8] 知识讲解卡片快速通道：FFmpeg 一次合成画面、配音、背景音乐和字幕（不经 MoviePy）
+        fast_result = svf_pipeline.fast_final_videos(
+            task_id, params, downloaded_videos, audio_file, subtitle_path, audio_duration,
+            partial_results=partial_results,
+        )
+        if fast_result is not None:
+            return fast_result
     final_video_paths = []
     combined_video_paths = []
     warnings = []
