@@ -44,10 +44,15 @@ def main() -> None:
     out["busy"] = tasks.busy_task() == tid
 
     # 等到出现带任务 ID 的 FFmpeg 子进程（知识卡片编码或最终合成）
+    # 进度超过 50% 说明知识卡片快速通道已经在编码（那之前也有短命的 FFmpeg/ffprobe，比如读配音时长，可能一闪就没了）
     deadline = time.time() + 240
-    while time.time() < deadline and not (tasks.task_processes(tid) and int((sm.state.get_task(tid) or {}).get("progress") or 0) >= 40):
+    seen = []
+    while time.time() < deadline:
+        seen = tasks.task_processes(tid)
+        if seen and int((sm.state.get_task(tid) or {}).get("progress") or 0) > 50:
+            break
         time.sleep(0.2)
-    out["ffmpeg_seen"] = [p.pid for p in tasks.task_processes(tid)]
+    out["ffmpeg_seen"] = [p.pid for p in seen]
     out["progress_before_cancel"] = (sm.state.get_task(tid) or {}).get("progress")
     t0 = time.time()
     out["cancel_message"] = tasks.cancel(tid, wait=20)
