@@ -361,6 +361,38 @@ class OfflineTaskTest(unittest.TestCase):
         self.assertIn("全部改用知识卡片", r.stdout + r.stderr)
 
 
+    def test_ai_director_task_with_fake_llm(self):
+        """1.1.0 AI 导演：假大模型返回固定的导演 JSON，离线出片，分镜图和分镜清单齐全，版式和标题来自导演。"""
+        res, r = self.run_check("knowledge_cards_ai")
+        self.assertTrue(res["ok"], res)
+        m = res["manifest"]
+        self.assertEqual(m["mode"], "ai")
+        self.assertEqual(m["theme"], "studio")
+        self.assertEqual(m["kinds"][:3], ["title", "bullets", "table"])
+        self.assertEqual(m["headings"][1], "三种基本逻辑门")
+        self.assertEqual(m["images"], len(m["kinds"]))
+        self.assertEqual(m["thumbs"], len(m["kinds"]))
+        self.assertTrue(m["contiguous"])
+        self.assertEqual(res["llm_calls"], [["director", True, 1]])
+        self.assertEqual(res["fake_server"], {"chat": 1, "images": 0})
+        self.assertNotIn("generating video terms", r.stdout + r.stderr)
+
+    def test_ai_director_bad_json_falls_back_to_rules(self):
+        """导演两次都不合格：重试一次后退回规则切分，日志写明原因。"""
+        res, r = self.run_check("knowledge_cards_ai", "cards_task_check.py", "--director-bad")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["manifest"]["mode"], "rule")
+        self.assertIn("JSON", res["manifest"]["fallback"])
+        self.assertEqual([c[0] for c in res["llm_calls"]], ["director", "director"])
+        self.assertIn("退回「规则切分」", r.stdout + r.stderr)
+
+    def test_cards_with_ai_illustration(self):
+        """卡片 + AI 插图：假文生图服务返回 PNG，导演标记的页有插图，存在任务目录。"""
+        res, r = self.run_check("knowledge_cards_illus")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["manifest"]["illustrations"], 1)
+        self.assertEqual(res["fake_server"]["images"], 1)
+
     def test_duplicate_cancel_and_leftover_tasks(self):
         """防重复提交、取消（结束 FFmpeg、状态不被写回）、残留任务标「已中断」，见 tests/tasks_check.py。"""
         res, r = self.run_check("", "tasks_check.py")

@@ -2,7 +2,7 @@
 author: Claude
 created: 2026-10-13
 updated: 2026-10-15
-version: 1.0.3
+version: 1.1.0
 tags: [Claude, AI 短视频工厂, 上游, MoneyPrinterTurbo]
 ---
 
@@ -46,8 +46,22 @@ tags: [Claude, AI 短视频工厂, 上游, MoneyPrinterTurbo]
 | P6 | `app/services/task.py` | 文件开头尝试导入 `svf_ext.pipeline`（导入不到就是 `None`）。① `_SUPPORTED_VIDEO_SOURCES` 加上三个程序生成来源；② 纯「知识讲解卡片」不调用大模型生成搜索关键词（`generate_terms`）；③ `get_video_materials` 在 local / loomloom 分支之后加一个分支：来源是程序生成组时调用 `svf_pipeline.prepare_materials`（这时配音和字幕已经生成，按它们的时间分页画图，返回一个 mp4 交回上游后续流程）；④ 配音失败 `failed to synthesize audio; …`、素材下载失败 `failed to download video materials from …` 两句英文原文不变，后面接上中文原因 | ③ 讲解页要跟着配音和字幕的时间走，只有素材这一步之后才知道时间；其余流程（转场、字幕、配音、背景音乐、拼接）原样复用；② 少一次大模型调用、少一个失败点；④ 原因只在日志里，界面上看不到 |
 | P7 | `webui/Main.py` | 1.0.3，都在「能导入 `svf_ext.webui`」时才生效：① 「生成视频」按钮：有任务在生成（`svf_webui.generation_busy()`）时显示「生成中…」并 `disabled`，下面一行说明；提交前调用 `svf_webui.claim_generation`，不放行就提示原因、不提交；提交后记下目标时长（`note_submission`）、整页重新渲染一次；提交失败撤销登记；② 任务管理：`_collect_task_summaries` 开头调用 `reconcile_tasks`（残留任务标「已中断」）；`_task_state_filter_key` 让「已取消」「已中断」归入「失败」；状态列显示「已取消」「已中断」；生成中的任务在删除按钮的位置显示 ⏹「取消」（`cancel_task`），列表上方说明为什么暂时不能删；③ `_open_local_path` 改为 `svf_webui.open_folder`（经外壳主进程打开），`_open_task_path` 文件夹不存在时不再静默返回；任务管理和「缓存管理」打开失败时显示原因、完整路径和「复制路径」（`render_open_failure`）；④ `_render_generation_logs`：原始日志上方加「日志解读」和「大模型调用记录」（`render_task_insights`），原始日志加行号；⑤ 「文案设置」里「生成视频脚本的语言」下面加「目标时长（秒）」（`render_target_duration`） | ① 用户连按三次「生成视频」起了 3 个任务，多出来的「生成中 0%」删不掉、停不下来；② 上游没有取消功能，删除按钮对生成中的任务是灰的、不说明原因；③ 1.0.2 在后台进程里 `os.startfile` 打开文件夹在 Windows 上仍然没反应（原因见下面「1.0.3」）；④⑤ 用户要对照日志学习、要能设定视频长度 |
 | P8 | `app/services/task.py` | 1.0.3：`generate_final_videos` 开头调用 `svf_pipeline.fast_final_videos`；它返回结果（素材这一步留下了知识卡片快速通道的分页计划）就直接返回，否则（库存视频等其他来源）上游原流程不变 | 知识卡片出片太慢（51 秒竖屏最终渲染 5 分钟以上）：讲解视频不该再走为库存素材设计的「处理片段 → 拼接 → MoviePy 逐帧合成」，改为 FFmpeg 一次合成 |
+| P9 | `webui/Main.py` | 1.1.0：任务管理每一行的「主题」下面调用 `svf_webui.render_task_links`：任务目录里有分镜清单（`svf_storyboard.json`）就显示「审片 / 分镜」链接，有大模型调用记录（`llm_calls.jsonl`）就显示「模型调用」链接，点了在外壳的同名顶层标签页里打开这个任务 | 用户要求已完成的任务在任务管理里也能打开分镜视图和模型调用；上游任务表格每行的按钮在 `_render_task_table` 里逐个写死，没有可以接的地方，只能加两行 |
 
-不设环境变量时，P1–P3 的行为和上游完全一样（从源码直接 `streamlit run webui/Main.py` 照常可用）。P5–P8 只在能导入外壳扩展 `svf_ext` 时生效：应用里由生成界面后台的入口 `svf_child.py` 把它加到 `sys.path`；单独运行上游、或跑上游自带测试时导入不到，行为和上游完全一样。源码里每处改动都有「[补丁 P5]」…「[补丁 P8]」注释。
+不设环境变量时，P1–P3 的行为和上游完全一样（从源码直接 `streamlit run webui/Main.py` 照常可用）。P5–P9 只在能导入外壳扩展 `svf_ext` 时生效：应用里由生成界面后台的入口 `svf_child.py` 把它加到 `sys.path`；单独运行上游、或跑上游自带测试时导入不到，行为和上游完全一样。源码里每处改动都有「[补丁 P5]」…「[补丁 P9]」注释。
+
+### 1.1.0：AI 导演、工坊主题、AI 插图、审片 / 分镜、模型调用、字数控制——只加了 P9 两行
+
+| 功能 | 外壳模块 | 怎样接到上游 | 为什么这样接 |
+| --- | --- | --- | --- |
+| 新视频来源「知识讲解卡片（AI 导演）」「知识讲解卡片 + AI 插图」 | `svf_ext/__init__.py` 的 `CARD_SOURCES` | P5、P6 本来就是按 `svf_ext.CARD_SOURCES` 这个元组加「程序生成」组、加支持的来源、分流到 `svf_pipeline.prepare_materials`，元组里多两个值就接上了 | 不用改上游 |
+| AI 导演 | `svf_ext/director.py`、`pipeline.py` | 在 P6 的素材分支里（此时配音、字幕已生成）调用上游 `llm._generate_response(prompt)`，所以界面上能选的所有大模型服务都能用，也自动进调用记录 | 复用用户配好的那个大模型和上游的各家适配 |
+| 工坊主题 | `svf_ext/studio_cards.py`（移植自工坊 `studio/visuals.py`） | `cards.render_page` 遇到工坊主题、新版式或有插图时交给它；快速通道（P8）和 1.0.2 流程照常调用 `cards.render_page` | — |
+| AI 插图 | `svf_ext/illustrate.py` | 调用上游 `material.generate_images_openai`（上游的「OpenAI 兼容文生图」素材来源用的同一个函数，读同一组设置 `openai_image_*`） | 用户已经在「设置 → 素材来源设置」里配过；上游自带重试和「结果不明不重提交」的计费保护 |
+| 分镜画面和清单 | `svf_ext/shots.py` | 卡片类：P6 的素材分支里画；库存视频：`shots.install()` 包住 `task.generate_final_videos`，出片后按 `script.json` 的 `material_sources` 取素材缩略帧 | 上游按名字调用模块函数，换模块属性即可 |
+| 字数控制三档 | `svf_ext/duration.py`、`webui.py` | 包住 `llm.build_script_prompt`（按档位加不同的字数要求）和 `llm.generate_script`（「程序检查」档数字数、偏差大时调用 `llm._generate_response` 请模型改写）；控件由 P7 的「目标时长」位置一起显示 | — |
+| 调用记录的着色、思考过程、用途 | `svf_ext/llmlog.py` | 1.0.3 的包装上加：调用前记下提示词里哪些是变量（`parts`），读应答里的 `reasoning_content`，步骤函数返回后写一行「程序怎么用」 | — |
+| 「审片 / 分镜」「模型调用」标签页 | `svf/review.py`、`svf/web/review.js`、`calls.js`、`svf/server.py` | 外壳主进程只读任务目录里的文件；生成页的链接由 P7 的 `render_task_insights` 显示，任务管理里的链接由 P9 显示 | 生成页已经很重，查看类功能放到外壳 |
 
 ### 1.0.3：新功能尽量「包一层」，少改上游
 
@@ -110,7 +124,7 @@ tags: [Claude, AI 短视频工厂, 上游, MoneyPrinterTurbo]
 
 1. 克隆上游新版本，记下 commit；用 `python packaging/upstream_diff.py <旧版上游目录>` 确认当前补丁（或直接看本文件和 `upstream-patches.diff`）。
 2. 用新版源码整体替换 `upstream/`（同样删掉上表的字体和音乐），先单独提交一次「原样副本」。
-3. 按上表 P1–P8 逐条重新打补丁（P5–P8 依赖上游的 `VIDEO_SOURCE_GROUPS`、`_SUPPORTED_VIDEO_SOURCES`、`get_video_materials`、`generate_final_videos`、`open_task_folder`、`_render_task_table`、`_render_generation_logs`、`_render_generation_controls` 等；1.0.3 的外壳包装还依赖 `webui_task.submit_generation / _run_generation`、`llm._generate_response / build_script_prompt`、`task.generate_*`、`task._stage_progress_reporter` 这些名字，上游改名时 `svf_ext` 会在 `webui.log` 里记「外壳扩展没有接上上游」，跑 `tests/tasks_check.py`、`tests/llm_check.py` 确认，上游改名或改结构时按「为什么」重新找接入点；跑 `tests/test_cards.py` 的离线任务检查确认接通）（上游改了同一处时，按「为什么」一栏的目的重新实现），再提交。
+3. 按上表 P1–P9 逐条重新打补丁（P5–P8 依赖上游的 `VIDEO_SOURCE_GROUPS`、`_SUPPORTED_VIDEO_SOURCES`、`get_video_materials`、`generate_final_videos`、`open_task_folder`、`_render_task_table`、`_render_generation_logs`、`_render_generation_controls` 等；1.0.3 的外壳包装还依赖 `webui_task.submit_generation / _run_generation`、`llm._generate_response / build_script_prompt`、`task.generate_*`、`task._stage_progress_reporter` 这些名字，上游改名时 `svf_ext` 会在 `webui.log` 里记「外壳扩展没有接上上游」，跑 `tests/tasks_check.py`、`tests/llm_check.py` 确认，上游改名或改结构时按「为什么」重新找接入点；跑 `tests/test_cards.py` 的离线任务检查确认接通）（上游改了同一处时，按「为什么」一栏的目的重新实现），再提交。
 4. 运行 `python packaging/make_runtime_requirements.py`（需要 uv）重新生成依赖清单；检查新版本有没有新增大体积的可选依赖；逐条检查 `OVERRIDES`：上游已跟上的删掉，没跟上的确认依赖要求仍满足。
 5. 改 `svf/__init__.py` 里的 `UPSTREAM_COMMIT`、`UPSTREAM_VERSION`，递增应用版本号；更新本文件和 docs。
 6. 跑 `python tests/run_upstream_tests.py` 和外壳测试，推送后看 CI 的冒烟测试；在容器里用 `tests/ui_check.py` 检查界面是否还有新冒出来的英文（Streamlit 升级常会改提示文字，需要在 `svf/web/inject.js` 的对照表里补上）。

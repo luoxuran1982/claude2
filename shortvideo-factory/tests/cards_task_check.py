@@ -13,6 +13,10 @@
 --long 用约 50 秒的长文案（用来测出片用时，见 docs/02「知识卡片快速通道」的实测）；--bgm 生成一段本地背景音乐并开启混音；
 --landscape 用 16:9 横屏；--static 讲解页不缩放平移；--legacy 关掉快速通道（1.0.2 的流程，用来对比用时）。
 
+1.1.0：来源 knowledge_cards_ai（AI 导演）/ knowledge_cards_illus（卡片 + AI 插图）时，起一个本机的假大模型服务
+（OpenAI 兼容 /v1/chat/completions：按提示词里的编号句子返回固定结构的导演 JSON；/v1/images/generations：返回一张 PNG），
+把上游的大模型和文生图设置指向它；--director-bad 让假导演两次都返回不合格的 JSON，检查退回规则切分。
+
 最后一行输出 RESULT {json}。由 tests/test_cards.py（源码）和 packaging/smoke.py（安装包里的随包 Python）调用。
 """
 from __future__ import annotations
@@ -65,6 +69,82 @@ def _make_bgm(path: str, seconds: float = 20.0) -> None:
                    check=True)
 
 
+# ---------------------------------------------------------------- 假大模型（AI 导演）和假文生图
+
+def fake_director_json(prompt: str, bad: bool = False) -> str:
+    """按提示词里的「[n] 句子」返回一份合法的导演 JSON：第 1 句标题，之后每两句一页，版式轮流用要点、表格、流程、代码、对比、引言。"""
+    import re as _re
+    if bad:
+        return "我觉得这样分镜比较好：第一页讲定义……（没有 JSON）"
+    n = len(_re.findall(r"^\[(\d+)\] ", prompt, flags=_re.M))
+    illus = "illustrate" in prompt and "最多" in prompt and "image_prompt 里用" in prompt
+    pages = [{"sentences": [1], "type": "title", "heading": "逻辑门是什么", "data": {"subtitle": "数字电路的基本单元"},
+              "illustrate": illus, "image_prompt": "a glowing logic gate circuit on a dark blue background" if illus else ""}]
+    kinds = [
+        ("bullets", "三种基本逻辑门", {"items": ["与门 AND", "或门 OR", "非门 NOT"]}),
+        ("table", "三种门的规则", {"headers": ["门", "什么时候输出 1"], "rows": [["与门", "两个输入都是 1"], ["或门", "有一个是 1"], ["非门", "输入是 0"]]}),
+        ("flow", "计算机怎样运算", {"nodes": ["转成二进制", "逻辑门运算", "输出结果"]}),
+        ("code", "用 Python 模拟", {"language": "python", "code": "a, b = 1, 0\nprint(a and b)  # 与门\nprint(a or b)   # 或门", "highlight": [2]}),
+        ("compare", "晶体管与电子管", {"left_title": "晶体管", "left": ["数十亿个"], "right_title": "电子管", "right": ["几千个"]}),
+        ("quote", "一句话记住", {"text": "电脑其实是在做无数次简单的判断", "source": ""}),
+    ]
+    k, i = 0, 2
+    while i <= n:
+        kind, head, data = kinds[k % len(kinds)]
+        pages.append({"sentences": list(range(i, min(n, i + 1) + 1)), "type": kind, "heading": head, "data": data,
+                      "illustrate": False, "image_prompt": ""})
+        i += 2
+        k += 1
+    return json.dumps({"title": "逻辑门入门", "pages": pages}, ensure_ascii=False)
+
+
+def start_fake_llm(bad: bool = False):
+    import base64
+    import io
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from PIL import Image, ImageDraw
+    seen = {"chat": 0, "images": 0}
+
+    class Fake(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            if self.path.endswith("/images/generations"):
+                seen["images"] += 1
+                img = Image.new("RGB", (512, 768), (30, 60, 120))
+                ImageDraw.Draw(img).ellipse((100, 200, 412, 512), fill=(240, 180, 60))
+                buf = io.BytesIO()
+                img.save(buf, "PNG")
+                out = {"created": 1, "data": [{"b64_json": base64.b64encode(buf.getvalue()).decode()}]}
+            else:
+                seen["chat"] += 1
+                prompt = body["messages"][-1]["content"]
+                text = fake_director_json(prompt, bad)
+                out = {"id": "chatcmpl-d", "object": "chat.completion", "created": 1, "model": body.get("model"),
+                       "choices": [{"index": 0, "message": {"role": "assistant", "content": text,
+                                                            "reasoning_content": "先看有几句，再决定每页的版式。"},
+                                    "finish_reason": "stop"}],
+                       "usage": {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}}
+            data = json.dumps(out).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = HTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    from app.config import config
+    base = f"http://127.0.0.1:{srv.server_port}/v1"
+    config.app.update({"llm_provider": "openai", "openai_api_key": "sk-svfcheck-DIRECTOR123456789", "openai_base_url": base,
+                       "openai_model_name": "fake-director", "openai_image_base_url": base, "openai_image_model": "fake-image",
+                       "openai_image_api_keys": ""})
+    return seen
+
+
 def main() -> None:
     args = [a for a in sys.argv[2:] if not a.startswith("--")]
     flags = {a for a in sys.argv[2:] if a.startswith("--")}
@@ -75,6 +155,10 @@ def main() -> None:
 
     voice.tts = fake_tts
     from app.config import config
+    seen = None
+    if source in ("knowledge_cards_ai", "knowledge_cards_illus"):
+        seen = start_fake_llm(bad="--director-bad" in flags)
+        import svf_ext.webui  # noqa: F401  接上大模型调用记录（和应用里一样）
     if "--static" in flags:
         config.app["svf_card_motion"] = False
     if "--legacy" in flags:
@@ -112,6 +196,21 @@ def main() -> None:
         pages = json.load(open(sb, encoding="utf-8"))["pages"]
         info["pages"] = [p["kind"] for p in pages]
     info["subtitle"] = os.path.isfile(os.path.join(task_dir, "subtitle.srt"))
+    man = os.path.join(task_dir, "svf_storyboard.json")
+    if os.path.isfile(man):
+        m = json.load(open(man, encoding="utf-8"))
+        info["manifest"] = {"mode": m.get("mode"), "theme": m.get("theme"), "kinds": [p["kind"] for p in m["pages"]],
+                            "headings": [p["heading"] for p in m["pages"]],
+                            "images": sum(1 for p in m["pages"] if p.get("image") and os.path.isfile(os.path.join(task_dir, p["image"]))),
+                            "thumbs": sum(1 for p in m["pages"] if p.get("thumb") and os.path.isfile(os.path.join(task_dir, p["thumb"]))),
+                            "illustrations": sum(1 for p in m["pages"] if p.get("illustration")),
+                            "fallback": (m.get("director") or {}).get("fallback_reason", ""),
+                            "contiguous": all(abs(a["end"] - b["start"]) < 0.02 for a, b in zip(m["pages"], m["pages"][1:]))}
+    if seen is not None:
+        from svf_ext import llmlog
+        calls = llmlog.read_task(task_id)
+        info["llm_calls"] = [(c["step"], c.get("ok"), len(c.get("use_notes") or [])) for c in calls]
+        info["fake_server"] = seen
     info["stills"] = len([f for f in os.listdir(os.path.join(task_dir, "knowledge-cards"))
                           if f.endswith(".png")]) if os.path.isdir(os.path.join(task_dir, "knowledge-cards")) else 0
     info["ok"] = bool(videos) and info.get("duration", 0) > 5 and info.get("has_audio", False)

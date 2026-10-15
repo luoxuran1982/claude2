@@ -145,6 +145,22 @@ def check_runtime(py: Path, payload: Path, tmp: Path):
        f"快速通道编码器 {codec.group(1) if codec else '（没走快速通道）'}")
     if not codec:
         fail("知识讲解卡片没有走快速通道")
+    # 1.1.0：AI 导演 + AI 插图（假大模型服务端返回固定的导演 JSON、假文生图返回一张 PNG），离线出片并生成分镜图
+    env4 = dict(env, MPT_STORAGE_DIR=str(tmp / "ai-storage"), MPT_CONFIG_FILE=str(tmp / "ai-config.toml"))
+    r = subprocess.run([str(py), str(ROOT / "tests" / "cards_task_check.py"), str(payload / "child"), "knowledge_cards_illus"],
+                       env=env4, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1200,
+                       cwd=str(payload / "upstream"))
+    line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT ")), "")
+    print(line[:2000] or (r.stdout[-3000:] + r.stderr[-3000:]))
+    res = json.loads(line[7:]) if line else {}
+    m = res.get("manifest") or {}
+    if not (res.get("ok") and m.get("mode") == "ai" and m.get("images") == len(m.get("kinds") or [1, 1]) and m.get("illustrations") == 1
+            and "table" in (m.get("kinds") or []) and (res.get("llm_calls") or [[None]])[0][0] == "director"):
+        print(r.stdout[-4000:], r.stderr[-4000:])
+        fail("AI 导演 + AI 插图离线任务没通过")
+    ok(f"1.1.0：AI 导演 + AI 插图离线出片（假大模型），{len(m['kinds'])} 页（{'、'.join(m['kinds'])}），标题 {'、'.join(m['headings'])}，"
+       f"分镜图 {m['images']} 张，插图 {m['illustrations']} 张")
+    ai_task = Path(res["task_dir"])
     # 1.0.3：防重复提交、取消、残留任务；大模型调用记录和目标时长
     for script, label in (("tasks_check.py", "防重复提交、编码中取消（结束 FFmpeg、状态不被写回）、残留任务标「已中断」"),
                           ("llm_check.py", "大模型调用记录（完整提示词、原始输出、token，没有钥匙）、提示词里的目标时长")):
@@ -158,6 +174,40 @@ def check_runtime(py: Path, payload: Path, tmp: Path):
             print(r.stdout[-4000:], r.stderr[-4000:])
             fail(f"1.0.3 检查没通过：{label}")
         ok(f"1.0.3：{label}")
+    return ai_task
+
+
+def check_review(base: str, data: Path, ai_task: Path):
+    """1.1.0：「审片 / 分镜」「模型调用」两个标签页的接口，用上面离线跑出来的 AI 导演任务。"""
+    import shutil
+    dst = data / "storage" / "tasks" / ai_task.name
+    shutil.copytree(ai_task, dst)
+    tasks = json.loads(http(base + "/api/tasks"))["tasks"]
+    t = next((x for x in tasks if x["id"] == ai_task.name), None)
+    assert t and t["storyboard"] and t["video"] == "final-1.mp4" and t["calls"] >= 1, tasks
+    sb = json.loads(http(base + "/api/storyboard?task=" + ai_task.name))
+    m = sb["manifest"]
+    assert m["mode"] == "ai" and m["pages"][0]["kind"] == "title" and m["pages"][0]["image"], m
+    status, headers, body = http(f"{base}/taskfiles/{ai_task.name}/{m['pages'][0]['thumb']}", raw=True)
+    assert status == 200 and body[:2] == b"\xff\xd8", "缩略图读不到"
+    req = urllib.request.Request(f"{base}/taskfiles/{ai_task.name}/final-1.mp4", headers={"Range": "bytes=0-99"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        assert resp.status == 206 and len(resp.read()) == 100, "成片不支持 Range（视频不能拖动）"
+    for bad in (f"/taskfiles/{ai_task.name}/script.txt", f"/taskfiles/{ai_task.name}/../{ai_task.name}/subtitle.srt",
+                "/taskfiles/../config.toml"):
+        try:
+            http(base + bad)
+            fail(f"任务文件接口放行了不该放行的路径：{bad}")
+        except urllib.error.HTTPError as e:
+            assert e.code in (400, 403, 404), (bad, e.code)
+    lc = json.loads(http(base + "/api/llm-calls?task=" + ai_task.name))
+    c = lc["calls"][0]
+    assert c["step"] == "director" and c["reasoning"] and c["uses"][0].startswith("解析成分镜 JSON"), c
+    kinds = {r["k"] for r in c["messages"][-1]["runs"]}
+    assert {"tpl", "var"} <= kinds, kinds
+    assert "DIRECTOR123456789" not in json.dumps(lc, ensure_ascii=False), "调用记录里有钥匙"
+    ok(f"1.1.0：「审片 / 分镜」接口（{len(m['pages'])} 页、缩略图、成片可拖动、越界路径被拒）和「模型调用」接口（导演调用、思考过程、"
+       f"用途说明、模板/变量着色，没有钥匙）正常")
 
 
 def start(exe: Path, data: Path, *extra) -> subprocess.Popen:
@@ -393,7 +443,7 @@ def main():
         fail(f"找不到程序：{exe}")
     py = check_payload(payload)
     tmp = Path(tempfile.mkdtemp(prefix="svf-smoke-"))
-    check_runtime(py, payload, tmp)
+    ai_task = check_runtime(py, payload, tmp)
 
     data = tmp / "data"
     proc = start(exe, data, "--serve-only")
@@ -408,6 +458,7 @@ def main():
     assert 'voice_name = "zh-CN-XiaoxiaoNeural-Female"' in cfg, "首启配置没有设默认中文配音声音"
     ok("首启：用户数据目录里生成了中文配置（含默认中文配音声音），复制了开源字体")
     check_service(base, rec, st)
+    check_review(base, data, ai_task)
     quit_and_verify(base, rec, proc, data)
 
     crash_and_verify(exe, tmp / "data-crash")
