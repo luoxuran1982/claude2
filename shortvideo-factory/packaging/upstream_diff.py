@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OURS = ROOT / "upstream"
+RUNTIME_OUTPUT = ("storage/tasks/", "storage/temp/", "storage/cache_", "storage/llm_calls/")   # 运行或跑测试时产生的文件（.gitignore 里忽略）
 REMOVED_ON_PURPOSE = ("resource/fonts/MicrosoftYaHei", "resource/fonts/STHeiti", "resource/fonts/UTM Kabel", "resource/songs/")
 
 
@@ -23,7 +24,7 @@ def main(pristine: Path) -> None:
                    | {p.relative_to(OURS).as_posix() for p in OURS.rglob("*") if p.is_file() and "__pycache__" not in p.parts})
     changed = []
     for rel in names:
-        if rel.startswith(REMOVED_ON_PURPOSE):
+        if rel.startswith(REMOVED_ON_PURPOSE) or rel.startswith(RUNTIME_OUTPUT):
             continue
         a, b = pristine / rel, OURS / rel
         try:

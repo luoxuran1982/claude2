@@ -106,6 +106,15 @@ def claim(task_id: str, params, session_id: str = "", now: float | None = None) 
     return None
 
 
+def confirm(task_id: str) -> None:
+    """提交调用返回以后：如果它没经过上游的 submit_generation（被别的代码替换掉了，例如上游测试里打了桩），
+    登记就停在 claimed，撤掉，免得一直挡着后面的提交。正常情况下这时已经是 queued / running，什么也不做。"""
+    with _LOCK:
+        v = _LIVE.get(task_id)
+        if v and v.get("phase") == "claimed":
+            _LIVE.pop(task_id, None)
+
+
 def release(task_id: str) -> None:
     """提交失败时撤销登记。"""
     with _LOCK:

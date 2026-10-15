@@ -211,6 +211,10 @@ def claim_generation(task_id: str, params) -> str | None:
     return tasks.claim(task_id, params, session_id())
 
 
+def confirm_generation(task_id: str) -> None:
+    tasks.confirm(task_id)
+
+
 def release_generation(task_id: str) -> None:
     tasks.release(task_id)
 

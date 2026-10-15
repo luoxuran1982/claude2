@@ -12,6 +12,9 @@
 5. （--generate）走通一条主要操作：本地素材 + 无配音（不需要网络和 Key）生成一条视频；生成中 FFmpeg 子进程出现在运行状态里，结束后消失；
    再用「知识讲解卡片」+ 无配音生成一条（1.0.2）。
 5b. 1.0.2：视频来源下拉的「程序生成」组、卡片配色、声音和文案语言不一致提醒、钥匙填错栏位提示、素材下载代理输入框。
+5c. 1.0.3（--generate 时）：目标时长控件；界面上「生成文案」（假的 OpenAI 兼容接口）→ 连点三次「生成视频」只起一个任务、按钮变灰「生成中…」；
+   日志解读、大模型调用记录（含完整提示词、token，没有钥匙）、原始日志行号；任务管理里取消 → 「已取消」→ 能删除；
+   「打开目录」失败时显示完整路径和「复制路径」（容器里没有 xdg-open，正好走失败分支）。截图写进 docs/assets。
 6. 扫一遍 Streamlit 页面里剩下的英文。
 7. 点「退出」：启动器、后台全部结束，端口释放。
 结果写到 <截图目录>/ui_check_report.json。
@@ -489,6 +492,144 @@ def run_generate_cards(page, base: str, data: Path):
             shutil.copy(f, Path(REPORT["shots"]) / f"cards-page-{k + 1}.png")
 
 
+FAKE_KEY = "sk-uicheck-NOTAREALKEY1234567890"
+UI_SCRIPT = ("逻辑门是数字电路的基本单元，也是计算机里最小的“判断员”。与门只有两个输入都为1时才输出1。或门只要有一个输入为1就输出1。"
+             "非门则把输入取反。学习逻辑门有三个要点：第一，记住真值表。第二，会画电路符号。第三，能把门组合成加法器。"
+             "计算机处理数据，先把信号转成二进制，再交给逻辑门运算，最后输出结果。CPU里有数十亿个晶体管，而早期的计算机只有几千个电子管。"
+             "常见的门电路包括与门、或门、非门和异或门。把这些门组合起来，就能做出整个CPU。")
+
+
+def start_fake_llm() -> int:
+    """假的 OpenAI 兼容接口：写文案返回 UI_SCRIPT，关键词返回 JSON 数组，带 token 用量。"""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            prompt = body["messages"][-1]["content"]
+            text = '["logic gate", "circuit"]' if "search terms" in prompt else UI_SCRIPT
+            data = json.dumps({"id": "chatcmpl-ui", "object": "chat.completion", "created": 1, "model": body.get("model"),
+                               "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                               "usage": {"prompt_tokens": 512, "completion_tokens": 260, "total_tokens": 772}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv.server_port
+
+
+def preset_config(data: Path, llm_port: int) -> None:
+    """首启前写好配置：大模型指向假接口（只有 1.0.3 的检查用到）。"""
+    from svf import userdata
+    data.mkdir(parents=True, exist_ok=True)
+    text = userdata.initial_config_text((ROOT / "upstream" / "config.example.toml").read_text(encoding="utf-8"))
+    text = re.sub(r'(?m)^llm_provider = ".*"$', 'llm_provider = "openai"', text, count=1)
+    text = re.sub(r'(?m)^openai_api_key = ".*"$', f'openai_api_key = "{FAKE_KEY}"', text, count=1)
+    text = re.sub(r'(?m)^openai_base_url = ".*"$', f'openai_base_url = "http://127.0.0.1:{llm_port}/v1"', text, count=1)
+    text = re.sub(r'(?m)^openai_model_name = ".*"$', 'openai_model_name = "fake-model"', text, count=1)
+    (data / "config.toml").write_text(text, encoding="utf-8")
+
+
+def task_dirs(data: Path) -> set:
+    t = data / "storage" / "tasks"
+    return {d.name for d in t.iterdir() if d.is_dir()} if t.exists() else set()
+
+
+def run_103(page, base: str, data: Path, assets: Path):
+    """1.0.3：目标时长、生成文案（假接口）、连点只起一个、按钮置灰、日志解读、调用记录、取消、删除、打开目录失败的兜底。"""
+    page.click("#tab-studio")
+    frame = wait_studio(page)
+    dismiss_tour(frame)
+    frame.locator(".mpt-grouped-select select").first.select_option(value="knowledge_cards")
+    frame.wait_for_timeout(2500)
+    box = frame.locator("[data-testid='stSelectbox']").filter(has_text="目标时长").first
+    expect(box.count() == 1, "文案设置里有「目标时长（秒）」")
+    box.locator("input").first.click()
+    frame.page.keyboard.type("60 秒")
+    frame.page.keyboard.press("Enter")
+    frame.wait_for_timeout(2500)
+    expect("约 270 字" in frame.inner_text("body"), "选 60 秒后显示换算的字数（约 270 字）")
+    frame.locator("textarea[aria-label*='视频主题']").first.fill("逻辑门是怎样工作的")
+    frame.locator("textarea[aria-label*='视频主题']").first.press("Tab")
+    frame.wait_for_timeout(1200)
+    frame.locator("button").filter(has_text="点击使用AI生成视频文案和关键词").first.click()
+    for _ in range(40):
+        frame.wait_for_timeout(1000)
+        if "逻辑门是数字电路的基本单元" in frame.locator("textarea[aria-label*='视频文案']").first.input_value():
+            break
+    expect("逻辑门是数字电路的基本单元" in frame.locator("textarea[aria-label*='视频文案']").first.input_value(),
+           "界面上「生成文案」经假的 OpenAI 兼容接口写进了文案框")
+    frame.locator("button").filter(has_text="无配音").first.click()
+    frame.wait_for_timeout(2000)
+    before = task_dirs(data)
+    btn = frame.locator(".st-key-generate_video_button button").first
+    for _ in range(3):
+        try:
+            btn.click(timeout=1500)
+        except Exception:  # noqa: BLE001  按钮已经变灰，点不了也算对
+            pass
+    frame.wait_for_timeout(8000)
+    new = task_dirs(data) - before
+    expect(len(new) == 1, "连点三次「生成视频」只起了一个任务", f"新任务 {sorted(new)}")
+    btn = frame.locator(".st-key-generate_video_button button").first
+    expect(btn.is_disabled() and "生成中" in btn.inner_text(), "生成中时按钮变灰、显示「生成中…」", btn.inner_text())
+    tid = sorted(new)[0] if new else ""
+    exp = frame.locator("[data-testid='stExpander']").filter(has_text="日志解读").first
+    exp.scroll_into_view_if_needed()
+    frame.wait_for_timeout(1500)
+    text = exp.inner_text()
+    expect("最终渲染" in text and "原始日志第" in text and "在做什么" in text, "日志解读按步骤显示，带原始日志行号")
+    page.screenshot(path=str(assets / "screen-log-explain-100.png"))
+    llm = frame.locator("[data-testid='stExpander']").filter(has_text="大模型调用记录").first
+    llm.locator("summary").first.click()
+    frame.wait_for_timeout(2000)
+    t2 = llm.inner_text()
+    expect("写文案" in t2 and "Length Requirement" in t2 and "772" in t2 and FAKE_KEY not in t2,
+           "大模型调用记录：界面上生成文案的那次被复制进任务，有完整提示词（含目标时长）、token，没有钥匙")
+    llm.scroll_into_view_if_needed()
+    page.screenshot(path=str(assets / "screen-llm-calls-100.png"))
+    rec_file = data / "storage" / "tasks" / tid / "llm_calls.jsonl"
+    expect(rec_file.exists() and FAKE_KEY not in rec_file.read_text(encoding="utf-8"), "任务目录有 llm_calls.jsonl，里面没有钥匙")
+    expect(frame.locator("[data-testid='stCode'] .linenumber, [data-testid='stCode'] [class*='linenumber']").count() > 0
+           or "1\n" in frame.locator("[data-testid='stCode']").last.inner_text()[:6], "原始日志带行号")
+    # 任务管理：取消、删除、打开目录
+    frame.locator("button").filter(has_text="任务管理").first.click()
+    frame.wait_for_timeout(3000)
+    cancel = frame.locator(f".st-key-cancel_task_all_{tid} button")
+    expect(cancel.count() == 1 and "不能直接删除" in frame.inner_text("body"), "任务管理：生成中的任务有「取消」，并说明为什么暂时不能删")
+    page.screenshot(path=str(assets / "screen-task-cancel-100.png"))
+    cancel.first.click()
+    frame.wait_for_timeout(5000)
+    expect("已取消" in frame.inner_text("body"), "点「取消」后状态变成「已取消」")
+    delete = frame.locator(f".st-key-delete_task_all_{tid} button")
+    expect(delete.count() == 1 and delete.first.is_enabled(), "取消后删除按钮可以点")
+    frame.locator(f".st-key-open_task_all_{tid} button").first.click()
+    frame.wait_for_timeout(4000)
+    body = frame.inner_text("body")
+    ok_open = "已请系统打开文件夹" in body
+    fail_ui = "没能打开文件夹" in body and str(data / "storage" / "tasks" / tid) in body
+    expect(ok_open or fail_ui, "「打开目录」经启动器打开；失败时显示原因和完整路径", "打开了" if ok_open else "走了失败兜底")
+    if fail_ui:
+        cp = frame.locator("button.svf-copy-path").first
+        expect(cp.count() == 1, "失败时有「复制路径」按钮")
+        page.screenshot(path=str(assets / "screen-open-fail-100.png"))
+        cp.click()
+        frame.wait_for_timeout(600)
+        expect("已复制" in cp.inner_text() or "复制失败" in cp.inner_text(), "点「复制路径」有反馈", cp.inner_text())
+    delete.first.click()
+    frame.wait_for_timeout(4000)
+    expect(tid not in task_dirs(data), "取消后的任务能删除")
+    page.keyboard.press("Escape")
+    frame.wait_for_timeout(1000)
+
+
 ICONS = {"expand_more", "settings", "keyboard_arrow_right", "keyboard_arrow_down", "auto_awesome", "restart_alt", "preview",
          "graphic_eq", "article", "download", "upload", "close", "check", "delete", "folder_open", "refresh", "add", "remove"}
 
@@ -533,11 +674,14 @@ def main():
     ap.add_argument("--port", type=int, default=18777)
     ap.add_argument("--generate", action="store_true", help="走通一条离线出片（本地素材 + 无配音）")
     ap.add_argument("--media", default="", help="--generate 用的两个测试视频所在目录（clip1.mp4、clip2.mp4）")
+    ap.add_argument("--assets", default="", help="1.0.3 检查的截图另存到这里（如 docs/assets）")
     a = ap.parse_args()
     shots = Path(a.shots)
     shots.mkdir(parents=True, exist_ok=True)
     REPORT["shots"] = str(shots)
     data = Path(tempfile.mkdtemp(prefix="svf-ui-"))
+    preset_config(data, start_fake_llm())
+    os.environ.setdefault("DISPLAY", ":99")   # 让上游认为有桌面，「打开目录」走 1.0.3 的经启动器打开（容器里没有 xdg-open → 失败兜底）
     proc, rec = start_app(a.python, data, a.port)
     base = f"http://127.0.0.1:{rec['shell_port']}"
     try:
@@ -566,6 +710,7 @@ def main():
                                         "-t", "8", "-pix_fmt", "yuv420p", "-c:v", "libx264", str(media / f"clip{i}.mp4")], check=True)
                 run_generate(page, base, data, media)
                 run_generate_cards(page, base, data)
+                run_103(page, base, data, Path(a.assets) if a.assets else shots)
             page.click("#tab-studio")
             wait_studio(page)
             scan_english(page)

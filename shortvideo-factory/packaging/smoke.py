@@ -5,8 +5,10 @@
 检查项：
 1. 包里的东西：随包 Python、上游源码、开源字体、使用指南的文档和源码；没有商业字体和来源不明的音乐。
 2. 随包 Python 能导入上游的主要模块，FFmpeg 可执行；随包 edge-tts 走通上游配音调用（假服务端）；
-   用「知识讲解卡片」来源离线跑通一个短任务（固定文案 + 假配音），产出 mp4。
+   用「知识讲解卡片」来源离线跑通一个短任务（固定文案 + 假配音），产出 mp4（1.0.3 起走快速通道，并报告选用的编码器）；
+   1.0.3：防重复提交 / 编码中取消 / 残留任务标「已中断」（tests/tasks_check.py），大模型调用记录和目标时长（tests/llm_check.py，假接口）。
 3. 服务模式启动：生成界面后台就绪；外壳页面、接口、使用指南（文档/源码/zip）、运行状态可用；
+   1.0.3 的「打开目录」接口 /api/open-path：数据目录之外 403、没有令牌 403、目录之内（只检查不打开）200；
    经反向代理的 Streamlit 页面插入了外壳脚本，静态文件和 WebSocket 握手正常。
 4. 发「退出」指令后：启动器、生成界面后台及其子进程全部结束，两个端口都不再监听，运行记录已删除。
 5. 异常收尾：强制结束启动器（模拟崩溃）后，生成界面后台在 20 秒内自行结束（Windows 靠作业对象，macOS 靠看门狗）。
@@ -23,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -136,8 +139,25 @@ def check_runtime(py: Path, payload: Path, tmp: Path):
     if not (res.get("ok") and res.get("size") == [1080, 1920] and res.get("subtitle") and res.get("pages")):
         print(r.stdout[-4000:], r.stderr[-4000:])
         fail("知识讲解卡片离线任务没有产出可用的 mp4")
+    codec = re.search(r"知识卡片快速通道：编码器 (\S+)", r.stdout + r.stderr)
     ok(f"知识讲解卡片：离线跑通短任务，{len(res['pages'])} 页（{'、'.join(res['pages'])}），"
-       f"成片 {res['duration']} 秒 {res['size'][0]}×{res['size'][1]}，用时 {time.time() - t0:.0f} 秒")
+       f"成片 {res['duration']} 秒 {res['size'][0]}×{res['size'][1]}，用时 {time.time() - t0:.0f} 秒，"
+       f"快速通道编码器 {codec.group(1) if codec else '（没走快速通道）'}")
+    if not codec:
+        fail("知识讲解卡片没有走快速通道")
+    # 1.0.3：防重复提交、取消、残留任务；大模型调用记录和目标时长
+    for script, label in (("tasks_check.py", "防重复提交、编码中取消（结束 FFmpeg、状态不被写回）、残留任务标「已中断」"),
+                          ("llm_check.py", "大模型调用记录（完整提示词、原始输出、token，没有钥匙）、提示词里的目标时长")):
+        env3 = dict(env, MPT_STORAGE_DIR=str(tmp / f"{script}-storage"), MPT_CONFIG_FILE=str(tmp / f"{script}-config.toml"))
+        r = subprocess.run([str(py), str(ROOT / "tests" / script), str(payload / "child")], env=env3, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=900, cwd=str(payload / "upstream"))
+        line = next((l for l in r.stdout.splitlines() if l.startswith("RESULT ")), "")
+        print(line[:1500] or (r.stdout[-3000:] + r.stderr[-3000:]))
+        res = json.loads(line[7:]) if line else {}
+        if not res.get("ok"):
+            print(r.stdout[-4000:], r.stderr[-4000:])
+            fail(f"1.0.3 检查没通过：{label}")
+        ok(f"1.0.3：{label}")
 
 
 def start(exe: Path, data: Path, *extra) -> subprocess.Popen:
@@ -243,6 +263,7 @@ def check_service(base: str, rec: dict, st: dict):
     z = zipfile.ZipFile(__import__("io").BytesIO(http(base + "/api/guide/source.zip", timeout=60)))
     assert "shortvideo-factory/svf/app.py" in z.namelist() and "shortvideo-factory/docs/01 使用指南.md" in z.namelist()
     ok(f"使用指南：{len(g['docs'])} 篇文档、{len(g['sources'])} 个源码文件、{len(g['assets'])} 个附件，源码 zip {len(z.namelist())} 个文件")
+    check_open_path(base, rec)
     procs = json.loads(http(base + "/api/processes"))
     pids = {p["pid"] for p in procs["processes"]}
     assert rec["launcher_pid"] in pids and st["webui"]["pid"] in pids, procs
@@ -261,6 +282,33 @@ def check_service(base: str, rec: dict, st: dict):
     code = ws_handshake(rec["shell_port"], "/app/_stcore/stream")
     assert code == 101, f"WebSocket 握手返回 {code}"
     ok("Streamlit 页面经反向代理可用：插入了外壳脚本，静态文件、图标字体、WebSocket 握手正常")
+
+
+def check_open_path(base: str, rec: dict):
+    """1.0.3：生成界面后台请启动器打开文件夹的接口。CI 上不真的打开窗口（check_only），只验证路径限制。"""
+    st = json.loads(http(base + "/api/status"))
+    data = Path(st["paths"]["data"])
+    hdr = {"X-SVF-Token": rec["token"], "Content-Type": "application/json"}
+
+    def call(payload, headers=hdr):
+        try:
+            return 200, json.loads(http(base + "/api/open-path", data=json.dumps(payload).encode(), headers=headers))
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except ValueError:
+                return e.code, {}
+    code, res = call({"path": str(data / "storage"), "check_only": True})
+    assert code == 200 and res.get("ok"), (code, res)
+    code, res = call({"path": str(data.parent), "check_only": True})
+    assert code == 403 and "数据目录" in res.get("error", ""), (code, res)
+    code, res = call({"path": str(data / "storage" / ".." / ".." / "outside"), "check_only": True})
+    assert code == 403, (code, res)
+    code, res = call({"path": str(data / "storage" / "no-such-dir"), "check_only": True})
+    assert code == 404 and res.get("path"), (code, res)
+    code, _ = call({"path": str(data / "storage"), "check_only": True}, headers={"Content-Type": "application/json"})
+    assert code == 403, code
+    ok("打开目录接口 /api/open-path：数据目录之内放行（只检查），目录外、.. 越界、没有令牌都被拒绝，不存在的路径给出完整路径")
 
 
 def quit_and_verify(base: str, rec: dict, proc, data: Path):

@@ -76,7 +76,21 @@
              )
              return None
          return downloaded_videos
-@@ -1674,7 +1688,9 @@
+@@ -973,6 +987,13 @@
+     *, partial_results: dict | None = None,
+ ):
+     """Record completed outputs even if a later clip raises before returning."""
++    if svf_pipeline:  # [补丁 P8] 知识讲解卡片快速通道：FFmpeg 一次合成画面、配音、背景音乐和字幕（不经 MoviePy）
++        fast_result = svf_pipeline.fast_final_videos(
++            task_id, params, downloaded_videos, audio_file, subtitle_path, audio_duration,
++            partial_results=partial_results,
++        )
++        if fast_result is not None:
++            return fast_result
+     final_video_paths = []
+     combined_video_paths = []
+     warnings = []
+@@ -1674,7 +1695,9 @@
  
      # 2. Generate terms
      video_terms = ""
@@ -166,14 +180,35 @@
      "subtitle_position": "bottom",
      "subtitle_display_mode": "sentence",
      "subtitle_animation": "none",
-@@ -1142,6 +1153,14 @@
+@@ -967,6 +978,8 @@
+ 
+ 
+ def _task_state_filter_key(task):
++    if globals().get("svf_webui") and svf_webui.task_filter_key(task):  # [补丁 P7] 已取消、已中断归入「失败」，不算生成中
++        return svf_webui.task_filter_key(task)
+     normalized_state = _normalize_task_state(task.get("state"))
+     if normalized_state == const.TASK_STATE_PROCESSING:
+         return "processing"
+@@ -1040,6 +1053,10 @@
+ 
+ 
+ def _collect_task_summaries(limit=20):
++    if globals().get("svf_webui"):  # [补丁 P7] 「生成中」但后台没在跑的任务（连点残留、重启前没结束的）标成「已中断」
++        svf_webui.reconcile_tasks(
++            sm.state, _active_generation_tasks(), st.session_state.get("pending_generation_task_id")
++        )
+     history_tasks = {task["task_id"]: task for task in _scan_history_tasks(limit=50)}
+     active_tasks = _active_generation_tasks()
+ 
+@@ -1142,6 +1159,15 @@
      return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
  
  
 +def _open_local_path(path):
-+    # [补丁 P5] webbrowser.open("file://…") 在 Windows 上静默失败；改用 os.startfile / open / xdg-open
++    # [补丁 P5] webbrowser.open("file://…") 在 Windows 上静默失败；
++    # [补丁 P7] 改为请外壳主进程打开（只限数据目录之内），失败时显示完整路径和「复制路径」
 +    if svf_webui:
-+        svf_webui.open_path(path)
++        svf_webui.open_folder(st, path)
 +    else:
 +        webbrowser.open(Path(path).as_uri())
 +
@@ -181,7 +216,15 @@
  def _open_task_path(task_path):
      tasks_root = os.path.abspath(utils.task_dir())
      normalized_path = os.path.abspath(task_path)
-@@ -1155,7 +1174,7 @@
+@@ -1149,13 +1175,15 @@
+         logger.warning(f"invalid task folder path: {normalized_path}")
+         return
+     if not os.path.isdir(normalized_path):
++        if globals().get("svf_webui"):  # [补丁 P7] 不再静默返回：说明文件夹不存在，并给出完整路径
++            svf_webui.report_open_failure(st, normalized_path, "任务文件夹不存在（任务还没开始写文件，或已被删除）")
+         return
+     if _is_headless_server():
+         # storage 目录通常以卷挂载映射回宿主机，提示相对路径即可定位文件。
          rel_path = os.path.relpath(normalized_path, os.path.dirname(tasks_root))
          st.toast(f"{tr('Open Task Folder')}: ./storage/{rel_path}", icon="📂")
          return
@@ -190,7 +233,59 @@
  
  
  def _open_task_video(video_file):
-@@ -1901,7 +1920,7 @@
+@@ -1274,6 +1302,9 @@
+         st.info(tr("No Tasks Match Filter"))
+         return
+ 
++    if globals().get("svf_webui") and any(tm.is_task_busy(t) or _task_state_filter_key(t) == "processing" for t in filtered_tasks):
++        # [补丁 P7] 说明为什么暂时不能删
++        st.caption("「生成中」的任务不能直接删除：先点那一行最右边的 ⏹「取消」，取消后就能删除。")
+     visible_tasks = filtered_tasks[:12]
+     list_height = min(390, max(96, len(visible_tasks) * 58))
+     with st.container(height=list_height, border=False):
+@@ -1297,7 +1328,10 @@
+                     [1.1, 1.7, 3.0, 0.8, 1.6],
+                     vertical_alignment="center",
+                 )
+-                row_cols[0].write(_task_state_label(task["state"], has_video))
++                row_cols[0].write(
++                    svf_webui.task_label(task, _task_state_label(task["state"], has_video))
++                    if globals().get("svf_webui") else _task_state_label(task["state"], has_video)
++                )  # [补丁 P7] 显示「已取消」「已中断」
+                 row_cols[1].write(_format_task_time(task["mtime"]))
+                 row_cols[2].write(_format_task_subject(task["subject"]))
+                 row_cols[3].write(f"{task['progress']}%")
+@@ -1343,6 +1377,20 @@
+                         _queue_task_restore(task_id)
+ 
+                 with action_cols[3]:
++                    if globals().get("svf_webui") and is_busy and not task.get("cross_post_state"):
++                        # [补丁 P7] 生成中的任务不能直接删：这里换成「取消」，取消后就能删除
++                        if st.button(
++                            "取消",
++                            key=f"cancel_task_{key_prefix}_{task_id}",
++                            use_container_width=True,
++                            icon=":material/stop_circle:",
++                            help="正在生成，不能直接删除：先点这里取消，取消后就能删除",
++                        ):
++                            message = svf_webui.cancel_task(task_id)
++                            _remove_active_generation_task(task_id)
++                            st.toast(message)
++                            st.rerun()
++                        continue
+                     delete_label = tr("Delete Task")
+                     delete_help = (
+                         f"{delete_label} ({tr('Task Status Processing')})"
+@@ -1394,6 +1442,8 @@
+             ]
+             _render_task_table(filtered_tasks, status_key)
+ 
++    if globals().get("svf_webui"):  # [补丁 P7] 打开失败时显示完整路径和「复制路径」
++        svf_webui.render_open_failure(st, "tasks")
+     _render_task_video_preview()
+ 
+ 
+@@ -1901,7 +1951,7 @@
          # 通过路径拼接访问任务目录之外的位置，也避免后续打开目录时触发
          # 平台 shell 对特殊字符的解释。
          normalized_task_id = str(UUID(str(task_id)))
@@ -199,7 +294,7 @@
          path = os.path.abspath(os.path.join(tasks_root, normalized_task_id))
  
          # 即使 UUID 校验通过，也再次确认最终路径仍在任务根目录内，避免
-@@ -1911,7 +1930,7 @@
+@@ -1911,7 +1961,7 @@
              return
  
          if os.path.isdir(path):
@@ -208,16 +303,39 @@
      except Exception as e:
          logger.exception(f"failed to open task folder: task_id={task_id}, error={e}")
  
-@@ -2813,7 +2832,7 @@
+@@ -2004,6 +2054,11 @@
+ 
+ def _render_generation_logs(task_id):
+     """渲染后台任务日志快照，不从工作线程访问 Streamlit 会话状态。"""
++    if globals().get("svf_webui"):  # [补丁 P7] 原始日志上方：「日志解读」和「大模型调用记录」
++        svf_webui.render_task_insights(
++            st, task_id,
++            [] if config.ui.get("hide_log", False) else webui_task.get_task_logs(task_id),
++        )
+     if config.ui.get("hide_log", False):
+         return
+ 
+@@ -2011,7 +2066,7 @@
+     if not log_records:
+         return
+ 
+-    st.code("\n".join(log_records))
++    st.code("\n".join(log_records), line_numbers=bool(globals().get("svf_webui")))  # [补丁 P7] 带行号，和日志解读对照
+ 
+ 
+ def _render_generation_task_snapshot(task_id, task):
+@@ -2813,7 +2868,9 @@
              use_container_width=True,
              icon=":material/folder_open:",
          ):
 -            webbrowser.open(Path(cache_manager.video_cache_dir()).as_uri())
 +            _open_local_path(cache_manager.video_cache_dir())  # [补丁 P5]
++        if globals().get("svf_webui"):  # [补丁 P7] 打开失败时显示完整路径和「复制路径」
++            svf_webui.render_open_failure(st, "cache")
  
          cleanup_disabled = not confirmed or cleanup_preview.file_count == 0
          if cleanup_col.button(
-@@ -3653,6 +3672,8 @@
+@@ -3653,6 +3710,8 @@
                      key="pexels_api_keys_input",
                  )
                  _save_material_api_keys("pexels_api_keys", pexels_api_key)
@@ -226,7 +344,7 @@
  
                  pixabay_api_key = st.text_input(
                      tr("Pixabay API Key"),
-@@ -3661,6 +3682,8 @@
+@@ -3661,6 +3720,8 @@
                      key="pixabay_api_keys_input",
                  )
                  _save_material_api_keys("pixabay_api_keys", pixabay_api_key)
@@ -235,7 +353,7 @@
  
                  coverr_api_key = st.text_input(
                      tr("Coverr API Key"),
-@@ -3669,6 +3692,8 @@
+@@ -3669,6 +3730,8 @@
                      key="coverr_api_keys_input",
                  )
                  _save_material_api_keys("coverr_api_keys", coverr_api_key)
@@ -244,7 +362,16 @@
  
              with st.container(border=True):
                  st.markdown(f"#### {tr('AI Video Generation APIs')}")
-@@ -5202,6 +5227,8 @@
+@@ -5040,6 +5103,8 @@
+             )
+             params.video_language = selected_language_code
+             _set_runtime_config("ui", "video_language", params.video_language)
++            if globals().get("svf_webui"):  # [补丁 P7] 目标时长（秒）：换算成文案字数写进写文案的提示词
++                svf_webui.render_target_duration(st, config, params)
+ 
+             # 使用带 key 的局部容器限定折叠入口样式，保持 expander 的原生交互，
+             # 同时避免样式误伤页面顶部的“基础设置”等其他折叠区域。
+@@ -5202,6 +5267,8 @@
                  "openai_image": tr("OpenAI Compatible Text-to-Image"),
                  "local": tr("Local file"),
              }
@@ -253,7 +380,7 @@
              saved_video_source_name = str(
                  config.app.get("video_source", "pexels") or "pexels"
              )
-@@ -5209,6 +5236,7 @@
+@@ -5209,6 +5276,7 @@
                  tr("Video Source"),
                  groups=(
                      (tr("Stock Video"), VIDEO_SOURCE_GROUPS["stock_video"]),
@@ -261,7 +388,7 @@
                      (tr("AI Video"), VIDEO_SOURCE_GROUPS["ai_video"]),
                      (tr("AI Image"), VIDEO_SOURCE_GROUPS["ai_image"]),
                      (tr("Local Material"), VIDEO_SOURCE_GROUPS["local"]),
-@@ -5252,6 +5280,8 @@
+@@ -5252,6 +5320,8 @@
                      accept_multiple_files=True,
                      key="local_video_materials_uploader",
                  )
@@ -270,7 +397,7 @@
  
              # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
              # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
-@@ -6283,7 +6313,7 @@
+@@ -6283,7 +6353,7 @@
                          )
                          st.rerun()
                  else:
@@ -279,7 +406,7 @@
  
      cached_preview = st.session_state.get("voice_preview_audio")
      valid_fingerprints = {sample_fingerprint, full_fingerprint}
-@@ -7133,6 +7163,8 @@
+@@ -7133,6 +7203,8 @@
                          )
  
                  params.voice_name = voice_name
@@ -288,7 +415,27 @@
                  if not voice.is_no_voice(voice_name):
                      # 占位 sentinel 仅用于非自动模式的禁用展示，不覆盖用户上一次
                      # 真正选择的音色，切回自动配音后可以恢复原设置。
-@@ -8038,10 +8070,13 @@
+@@ -7978,13 +8050,17 @@
+ 
+     _render_settings_transfer(params)
+ 
++    svf_busy_task = svf_webui.generation_busy() if globals().get("svf_webui") else None  # [补丁 P7] 有任务在生成时按钮置灰
+     start_button = st.button(
+-        tr("Generate Video"),
++        svf_webui.BUSY_LABEL if svf_busy_task else tr("Generate Video"),
+         use_container_width=True,
+         type="primary",
+         key="generate_video_button",
+         on_click=_prepare_generation_task,
+-    )
++        disabled=bool(svf_busy_task),
++    )
++    if svf_busy_task:
++        svf_webui.render_busy_note(st, svf_busy_task)
+     render_onboarding_tour()
+     if start_button:
+         _save_runtime_config()
+@@ -8038,10 +8114,13 @@
              "loomloom",
              "openai_image",
              "local",
@@ -302,6 +449,41 @@
  
          if params.video_source == "pexels" and not config.app.get(
              "pexels_api_keys", ""
+@@ -8341,6 +8420,14 @@
+                 f"task_id={task_id}, duration={reusable_voice_preview['duration']:.2f}s"
+             )
+ 
++        svf_blocked = svf_webui.claim_generation(task_id, params) if globals().get("svf_webui") else None  # [补丁 P7] 防重复提交
++        if svf_blocked:
++            _remove_active_generation_task(task_id)
++            st.warning(svf_blocked)
++            _render_current_generation_task()
++            return False
++        if globals().get("svf_webui"):  # [补丁 P7] 记下目标时长，并把界面上刚生成文案的大模型调用记录复制进任务
++            svf_webui.note_submission(task_id, params)
+         try:
+             st.toast(tr("Generating Video"))
+             logger.info(tr("Start Generating Video"))
+@@ -8364,11 +8451,19 @@
+                 st.session_state["loomloom_video_client_request_id"] = ""
+         except Exception:
+             _remove_active_generation_task(task_id)
++            if globals().get("svf_webui"):  # [补丁 P7] 提交失败，撤销防重复登记
++                svf_webui.release_generation(task_id)
+             st.error(tr("Video Generation Failed"))
+             st.stop()
+ 
+         st.session_state["current_generation_task_id"] = task_id
+         logger.info(f"WebUI generation task submitted: task_id={task_id}")
++        if globals().get("svf_webui"):  # [补丁 P7] 重新渲染一次，让「生成视频」按钮立即变成灰色的「生成中…」
++            svf_webui.confirm_generation(task_id)
++            # LoomLoom 提交后报价必须作废；立即整页重跑会让上游按当前输入重新询价，所以这一种来源不重跑
++            # （按钮下一次刷新时变灰，在此之前再点会被提交前检查拦下）
++            if params.video_source != "loomloom":
++                st.rerun()
+ 
+     _render_current_generation_task()
+     return start_button
 --- a/webui/i18n/zh.json
 +++ b/webui/i18n/zh.json
 @@ -224,8 +224,8 @@

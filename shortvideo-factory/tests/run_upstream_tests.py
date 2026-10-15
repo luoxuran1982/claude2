@@ -54,6 +54,8 @@ def main() -> int:
     with_ext = "--with-ext" in sys.argv[1:]
     tmp = Path(tempfile.mkdtemp(prefix="mpt-test-"))
     env = dict(os.environ, MPT_CONFIG_FILE=str(tmp / "config.toml"), PYTHONDONTWRITEBYTECODE="1")
+    if with_ext:   # 外壳扩展会在任务目录写 svf_task.json、svf_status.json、llm_calls.jsonl：放临时目录，不写进源码里的 upstream/storage
+        env["MPT_STORAGE_DIR"] = str(tmp / "storage")
     if with_ext:
         env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     else:   # 不加载外壳扩展：P5、P6 退回上游原行为
