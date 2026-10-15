@@ -221,5 +221,26 @@ class FastCardsTest(unittest.TestCase):
             self.assertTrue(list((Path(d) / "s").glob("page-*.png")))
 
 
+class PopenTrackerTest(unittest.TestCase):
+    def test_finds_and_kills_task_processes_without_psutil(self):
+        """取消任务时按命令行里的任务 ID 找到 FFmpeg 等子进程并结束（随包 Python 没有 psutil，靠 Popen 登记）。"""
+        import subprocess
+        from svf_ext import tasks
+        tasks._install_popen_tracker()
+        tid = "task-0000-abcd"
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", f"/tmp/{tid}/out.mp4"])
+        try:
+            found = tasks.task_processes(tid)
+            self.assertIn(p.pid, [x.pid for x in found])
+            self.assertEqual(tasks.task_processes("other-task"), [])
+            self.assertIn(p.pid, tasks.kill_task_processes(tid))
+            p.wait(10)
+            self.assertIsNotNone(p.returncode)
+            self.assertEqual(tasks.task_processes(tid), [])
+        finally:
+            if p.poll() is None:
+                p.kill()
+
+
 if __name__ == "__main__":
     unittest.main()
