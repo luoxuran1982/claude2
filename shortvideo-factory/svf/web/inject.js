@@ -222,6 +222,15 @@
     b.__svfClickedAt = now;
   }, true);
 
+  // ---------- 6. 「审片 / 分镜」「模型调用」链接（svf_ext/webui.py 的 task_links_html）：切到外壳的顶层标签页 ----------
+  document.addEventListener("click", e => {
+    const a = e.target.closest && e.target.closest("a.svf-goto");
+    if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    try { window.parent.SVFApp.openTask(a.dataset.tab, a.dataset.task, a.dataset.mode ? { mode: a.dataset.mode } : null); }
+    catch (err) { a.textContent = "请点顶部的「" + (a.dataset.tab === "calls" ? "模型调用" : "审片 / 分镜") + "」标签页查看"; }
+  }, true);
+
   // ---------- 3. 外部链接交给系统浏览器 ----------
   document.addEventListener("click", e => {
     const a = e.target.closest && e.target.closest("a[href]");

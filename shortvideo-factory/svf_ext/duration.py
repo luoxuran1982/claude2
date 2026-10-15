@@ -5,6 +5,13 @@
 - 跟配音语速联动：语速 1.2 倍就按 4.5 × 1.2 字/秒算；
 - 每次出片后记下「实际字数 / 实际配音秒数」（数据目录 storage/svf_speech_rate.json），之后用最近几次的中位数，越用越准。
 提示词里同时保留上游的段落数（段落数决定结构，字数决定长度）。生成后在日志解读里显示「目标多少秒、实际多少秒」。
+
+1.1.0「字数控制方式」（config.toml [ui] 的 svf_length_mode），三档：
+- strict 让大模型自己数（严格）：1.0.3 的做法，提示词要求「在 lo–hi 字之间、不算标点」。推理模型会逐字数数：
+  1.0.3 实测一次调用 1668 个输出 token 里有 1482 个花在数字数上，慢、贵；
+- check 程序检查（推荐，默认）：提示词只说「大约 N 字，不用逐字数」；模型写完由程序数字数，偏差超过 ±15% 时
+  再请模型「当前 X 字，请扩写/缩写到约 Y 字」改一次（多一次调用，但只在偏差大时才有）；
+- off 不控制：提示词里不提字数，只按上游的段落数。
 """
 from __future__ import annotations
 
@@ -15,6 +22,11 @@ import time
 from pathlib import Path
 
 CONFIG_KEY = "svf_target_seconds"     # config.toml 的 [ui]；0 表示不限（沿用上游，只按段落数）
+MODE_KEY = "svf_length_mode"          # config.toml 的 [ui]：strict / check（默认）/ off
+MODES = ("strict", "check", "off")
+DEFAULT_MODE = "check"
+MODE_LABELS = {"strict": "让大模型自己数（严格）", "check": "程序检查（推荐）", "off": "不控制（只按段落数）"}
+TOLERANCE = 0.15                      # 程序检查：偏差超过 ±15% 才请模型改写
 PRESETS = (0, 30, 60, 90, 120)
 CUSTOM = -1
 DEFAULT_CPS = {"zh": 4.5, "en": 2.6}  # 中文字/秒、英文词/秒（语速 1.0）
@@ -107,9 +119,29 @@ def plan(seconds, lang: str = "zh", voice_rate: float = 1.0, stats: dict | None 
             "unit": unit_name(lang), "basis": why}
 
 
-def prompt_addition(p: dict) -> str:
+def normalize_mode(mode) -> str:
+    m = str(mode or "").strip().lower()
+    return m if m in MODES else DEFAULT_MODE
+
+
+def prompt_addition(p: dict, mode: str = "strict") -> str:
+    """写进写文案提示词末尾的字数要求。mode 见模块说明；off 返回空串。"""
+    mode = normalize_mode(mode)
+    if mode == "off":
+        return ""
     n, unit, sec = p["target_chars"], p["unit"], p["target_seconds"]
     lo, hi = int(n * 0.9), int(n * 1.1)
+    if mode == "check":
+        if p["lang"] == "zh":
+            count = f"roughly {n} Chinese characters in total"
+        else:
+            count = f"roughly {n} words in total"
+        return (f"\n\n# Length Requirement:\n"
+                f"- The script will be read aloud by text-to-speech; the narration should last about {sec} seconds.\n"
+                f"- Aim for {count}. This is an approximate target: do not count characters one by one, "
+                f"a rough estimate is enough (the program checks the length afterwards).\n"
+                f"- Keep the number of paragraphs requested above.\n"
+                f"- 目标时长约 {sec} 秒，全文大约 {n} {unit}左右即可，不需要逐字计数。")
     if p["lang"] == "zh":
         count = f"about {n} Chinese characters in total (between {lo} and {hi}, not counting punctuation)"
     else:
@@ -119,6 +151,55 @@ def prompt_addition(p: dict) -> str:
             f"- Therefore write {count}.\n"
             f"- Keep the number of paragraphs requested above, and adjust the length of each paragraph so the total length meets this requirement.\n"
             f"- 目标时长约 {sec} 秒，全文约 {n} {unit}（{lo}–{hi}）。")
+
+
+def needs_revision(actual: int, target: int, tolerance: float = TOLERANCE) -> bool:
+    return bool(target) and actual > 0 and abs(actual - target) / float(target) > tolerance
+
+
+REVISE_TEMPLATE_ZH = ("下面是一段短视频口播文案，当前约 {x} 字。请把它{verb}到约 {y} 字（{lo}–{hi} 字之间），"
+                      "保持原来的意思、语气、语言和段落结构，不要加标题，不要加任何说明，只输出改写后的文案。\n\n文案：\n{script}")
+REVISE_TEMPLATE_EN = ("Below is a short-video narration script of about {x} words. Please {verb} it to about {y} words "
+                      "(between {lo} and {hi}). Keep the meaning, tone, language and paragraph structure. Do not add a title or "
+                      "any explanation; output only the rewritten script.\n\nScript:\n{script}")
+
+
+def revise_prompt(script: str, actual: int, target: int, lang: str) -> tuple[str, list]:
+    """「当前 X 字，请扩写/缩写到约 Y 字」。返回（提示词, 变量列表，给大模型调用记录着色用）。"""
+    zh = lang == "zh"
+    verb = ("扩写" if actual < target else "缩写") if zh else ("expand" if actual < target else "shorten")
+    lo, hi = int(target * 0.9), int(target * 1.1)
+    tpl = REVISE_TEMPLATE_ZH if zh else REVISE_TEMPLATE_EN
+    prompt = tpl.format(x=actual, verb=verb, y=target, lo=lo, hi=hi, script=script)
+    head = tpl.split("{script}")[0].format(x=actual, verb=verb, y=target, lo=lo, hi=hi)
+    variables = [("程序数出的当前字数", str(actual), head.split(str(actual))[0]), ("扩写还是缩写", verb, ""),
+                 ("目标字数", str(target), verb + "到约 " if zh else verb + " it to about "),
+                 ("文案（写文案这一步的输出）", script, "")]
+    return prompt, variables
+
+
+def length_line(info: dict) -> str:
+    """日志和日志解读里的一行：所用档位、目标字数、实际字数。"""
+    mode = info.get("length_mode")
+    if not mode:
+        return ""
+    s = f"字数控制：{MODE_LABELS.get(mode, mode)}"
+    if mode == "off" or not info.get("target_chars"):
+        return s + ("；没有目标字数，只按段落数" if mode == "off" else "；没有设目标时长，只按段落数")
+    unit = info.get("unit", "字")
+    s += f"；目标约 {info['target_chars']} {unit}"
+    if info.get("first_chars") is not None:
+        first = int(info["first_chars"])
+        dev = (first - info["target_chars"]) / float(info["target_chars"])
+        s += f"，模型写了 {first} {unit}（{dev:+.0%}）"
+        if mode == "check":
+            if info.get("revised"):
+                s += f"，偏差超过 ±{int(TOLERANCE * 100)}%，请模型改写了一次 → {info.get('final_chars')} {unit}"
+            elif info.get("revise_failed"):
+                s += f"，偏差超过 ±{int(TOLERANCE * 100)}%，改写没成功（{info['revise_failed']}），用第一次的文案"
+            else:
+                s += f"，在 ±{int(TOLERANCE * 100)}% 以内，不改写"
+    return s
 
 
 def read_task(task_dir) -> dict:

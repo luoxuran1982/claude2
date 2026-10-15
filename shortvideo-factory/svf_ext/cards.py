@@ -18,6 +18,7 @@ from .storyboard import Page, highlight_spans
 
 FONT_FILE = "NotoSansSC-Bold.ttf"
 
+ALL_THEMES = ("studio", "classroom", "dark", "paper")   # studio（工坊深色）由 studio_cards.py 画
 THEMES = {
     "classroom": {
         "bg": (236, 243, 251), "bg2": (220, 233, 248), "fg": (22, 40, 68), "muted": (98, 118, 150),
@@ -411,7 +412,13 @@ TEMPLATES = {"title": t_title, "keyword": t_keyword, "text": t_text, "stat": t_s
 
 def render_page(page: Page, W: int, H: int, theme: str = "classroom", index: int = 0, total: int = 1, vis: int = 99,
                 keywords=(), safe: str = "bottom") -> Image.Image:
-    """画一页（RGB）。vis 是已经亮起的要点条数。"""
+    """画一页（RGB）。vis 是已经亮起的要点条数。
+
+    1.1.0：主题选「工坊深色」（studio），或这一页的版式是 1.0.x 没有的（表格、代码、引言、图表、配图，
+    来自 AI 导演），或这一页有 AI 插图时，交给 studio_cards（移植自 AI 知识视频工坊）画。"""
+    if theme == "studio" or page.kind not in TEMPLATES or (page.data or {}).get("image_path"):
+        from . import studio_cards
+        return studio_cards.render_page(page, W, H, theme, index, total, vis, keywords, safe)
     theme = theme if theme in THEMES else "classroom"
     t = THEMES[theme]
     L = Layout(W, H, safe)

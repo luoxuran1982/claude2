@@ -8,7 +8,8 @@
 路由：
   /                      外壳页面（index.html，内嵌启动参数）
   /ui/*                  外壳静态文件
-  /api/*                 外壳接口（见各 Handler）
+  /api/*                 外壳接口（见各 Handler）；/api/tasks、/api/storyboard、/api/llm-calls 给「审片 / 分镜」「模型调用」
+  /taskfiles/<任务>/<文件> 任务目录里的分镜图片和成片（只读，支持 Range，视频可拖动）
   /app/_stcore/stream    WebSocket → Streamlit
   /app/*                 HTTP → Streamlit（流式转发，支持 Range，视频可拖动）
 """
@@ -34,7 +35,7 @@ import tornado.websocket
 from tornado.httpserver import HTTPServer
 
 from . import APP_ID, APP_NAME, UPSTREAM_COMMIT, UPSTREAM_NAME, UPSTREAM_URL, UPSTREAM_VERSION, __version__
-from . import guide, procinfo
+from . import guide, procinfo, review
 from .paths import web_dir
 from .supervisor import BASE_PATH
 
@@ -324,6 +325,48 @@ class SourceZipHandler(Base):
         self.finish(guide.source_zip())
 
 
+class TasksHandler(Base):
+    """任务列表（「审片 / 分镜」「模型调用」顶部的选择框）。"""
+
+    def get(self):
+        self.send_json({"tasks": review.list_tasks(self.state.data)})
+
+
+class StoryboardHandler(Base):
+    def get(self):
+        res = review.storyboard(self.state.data, self.get_argument("task", ""))
+        if res is None:
+            raise tornado.web.HTTPError(404, "没有这个任务")
+        self.send_json(res)
+
+
+class LlmCallsHandler(Base):
+    def get(self):
+        res = review.llm_calls(self.state.data, self.get_argument("task", ""))
+        if res is None:
+            raise tornado.web.HTTPError(404, "没有这个任务")
+        self.send_json(res)
+
+
+class TaskFileHandler(tornado.web.StaticFileHandler):
+    """任务目录里的图片和成片。只允许本机访问、只允许图片 / mp4 / json、不能跳出任务目录。"""
+
+    def prepare(self):
+        host = (self.request.host or "").rsplit(":", 1)[0].strip("[]")
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise tornado.web.HTTPError(403, "只允许本机访问")
+
+    def validate_absolute_path(self, root, absolute_path):
+        rel = os.path.relpath(absolute_path, root).replace(os.sep, "/")
+        task, _, sub = rel.partition("/")
+        if review.task_file(Path(root).parent.parent, task, sub) is None:
+            raise tornado.web.HTTPError(404)
+        return super().validate_absolute_path(root, absolute_path)
+
+    def set_extra_headers(self, path):
+        self.set_header("Cache-Control", "no-cache")
+
+
 # ---------------- 反向代理 ----------------
 
 STARTING_PAGE = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="refresh" content="2">
@@ -491,6 +534,14 @@ class WSProxyHandler(tornado.websocket.WebSocketHandler):
         return None
 
 
+def _ensure_dir(p: Path) -> Path:
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return p
+
+
 def make_app(state: AppState) -> tornado.web.Application:
     s = {"state": state}
     base = BASE_PATH
@@ -511,6 +562,10 @@ def make_app(state: AppState) -> tornado.web.Application:
         (r"/api/guide/source", GuideTextHandler, {"state": state, "kind": "source"}),
         (r"/api/guide/file", GuideFileHandler, s),
         (r"/api/guide/source.zip", SourceZipHandler, s),
+        (r"/api/tasks", TasksHandler, s),
+        (r"/api/storyboard", StoryboardHandler, s),
+        (r"/api/llm-calls", LlmCallsHandler, s),
+        (r"/taskfiles/(.*)", TaskFileHandler, {"path": str(_ensure_dir(review.tasks_root(state.data)))}),
         (rf"/{base}/_stcore/stream", WSProxyHandler, s),
         (rf"/{base}", tornado.web.RedirectHandler, {"url": f"/{base}/"}),
         (rf"/{base}/.*", ProxyHandler, s),

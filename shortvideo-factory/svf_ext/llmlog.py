@@ -11,22 +11,31 @@
   task.generate_script / generate_terms（后者还带着任务 ID），用 contextvars 传给记录函数。
 - 原始应答和 token 用量：调用期间临时接住 OpenAI SDK 的 chat.completions.create 返回值（只读，不改它）。
 
+1.1.0 起每条记录还有：
+- id：记录编号；之后程序怎么用这次的输出，另写一行 {"kind": "use", "ref": id, "note": "取作文案……"}（read_task 合并进 use_notes）；
+- parts：发给模型的提示词按「固定模板 / 程序填进去的变量」切成的片段（[{"t": 文字, "k": "tpl"|"var"|"prog", "n": 变量名}]），
+  「模型调用」页据此着色；
+- reasoning：模型的思考过程（DeepSeek 等返回的 reasoning_content，或输出里的 <think>…</think>），没有就是空。
+
 绝不记 API Key：记录里不放配置；写入前把配置里所有「key / token / secret / password」类字段的值、
 以及形如 sk-…、Bearer … 的串替换成「***」。没有任务的调用（界面上点「生成文案和关键词」）记到 storage/llm_calls/webui.jsonl；
 之后用这段文案点「生成视频」时，把对应的记录复制进那个任务的 llm_calls.jsonl（标明「在界面上生成」）。
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import os
 import re
 import threading
 import time
+import uuid
 from pathlib import Path
 
 FILE_NAME = "llm_calls.jsonl"
-STEP_LABELS = {"script": "写文案", "terms": "提取关键词", "social": "生成发布标题和话题", "test": "测试连接", "other": "其他"}
+STEP_LABELS = {"script": "写文案", "terms": "提取关键词", "revise": "按字数改写文案", "director": "AI 导演设计分镜",
+               "social": "生成发布标题和话题", "test": "测试连接", "other": "其他"}
 MAX_RAW = 400_000           # 单条原始应答最多保存多少字符
 UI_MAX_BYTES = 5_000_000
 
@@ -127,9 +136,19 @@ def read(path) -> list[dict]:
     return out
 
 
+def merge_uses(rows: list[dict]) -> list[dict]:
+    """把 {"kind": "use"} 行（程序怎么用了某次调用的输出）合并进对应调用的 use_notes，只返回调用记录。"""
+    calls = [r for r in rows if r.get("kind") != "use"]
+    by_id = {c.get("id"): c for c in calls if c.get("id")}
+    for r in rows:
+        if r.get("kind") == "use" and r.get("ref") in by_id:
+            by_id[r["ref"]].setdefault("use_notes", []).append(r.get("note", ""))
+    return calls
+
+
 def read_task(task_id: str) -> list[dict]:
     try:
-        return read(task_file(task_id))
+        return merge_uses(read(task_file(task_id)))
     except Exception:  # noqa: BLE001
         return []
 
@@ -172,8 +191,63 @@ def _usage(raw_list: list) -> dict | None:
         u = r.get("usage") if isinstance(r, dict) else None
         if isinstance(u, dict) and u:
             keep = {k: u.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens") if u.get(k) is not None}
+            det = u.get("completion_tokens_details") or {}
+            if isinstance(det, dict) and det.get("reasoning_tokens") is not None:
+                keep["reasoning_tokens"] = det["reasoning_tokens"]
             return keep or u
     return None
+
+
+THINK_RE = re.compile(r"<think>(.*?)(?:</think>|$)", re.S)
+
+
+def reasoning_of(raw_list: list) -> str:
+    """模型的思考过程：OpenAI 兼容应答里的 reasoning_content / reasoning 字段，或正文里的 <think>…</think>。"""
+    for r in reversed(raw_list or []):
+        try:
+            msg = r["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            continue
+        for k in ("reasoning_content", "reasoning"):
+            v = msg.get(k) if isinstance(msg, dict) else None
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(content, str):
+            m = THINK_RE.search(content)
+            if m and m.group(1).strip():
+                return m.group(1).strip()
+    return ""
+
+
+def make_parts(prompt: str, variables) -> list[dict]:
+    """把提示词切成「固定模板」和「变量」片段。variables：[(名称, 值, 前缀或空, 类别 var/prog)]，
+    值在提示词里第一次出现（有前缀时找「前缀 + 值」）的位置标成变量；找不到的变量忽略。"""
+    marks: list[tuple[int, int, str, str]] = []
+    for v in variables or []:
+        name, value = v[0], str(v[1] or "")
+        anchor = v[2] if len(v) > 2 else ""
+        kind = v[3] if len(v) > 3 else "var"
+        if not value.strip():
+            continue
+        pos = prompt.find(anchor + value) if anchor else prompt.find(value)
+        while pos >= 0:
+            a = pos + len(anchor)
+            b = a + len(value)
+            if not any(a < mb and ma < b for ma, mb, _, _ in marks):
+                marks.append((a, b, name, kind))
+                break
+            pos = prompt.find(anchor + value if anchor else value, pos + 1)
+    marks.sort()
+    out, cur = [], 0
+    for a, b, name, kind in marks:
+        if a > cur:
+            out.append({"t": prompt[cur:a], "k": "tpl", "n": ""})
+        out.append({"t": prompt[a:b], "k": kind, "n": name})
+        cur = b
+    if cur < len(prompt):
+        out.append({"t": prompt[cur:], "k": "tpl", "n": ""})
+    return out
 
 
 def make_record(prompt: str, output, elapsed: float, app_config, raw_list: list, ctx: dict | None,
@@ -183,7 +257,11 @@ def make_record(prompt: str, output, elapsed: float, app_config, raw_list: list,
     step = ctx.get("step") or "other"
     text = output if isinstance(output, str) else ("" if output is None else str(output))
     ok = bool(text) and not text.startswith("Error:") and not error
+    parts = ctx.get("parts")
+    if parts is None and ctx.get("prompt_vars"):
+        parts = make_parts(prompt, ctx["prompt_vars"])
     rec = {
+        "id": uuid.uuid4().hex[:12],
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "ts": round(time.time(), 3),
         "task_id": ctx.get("task_id") or "",
@@ -196,6 +274,8 @@ def make_record(prompt: str, output, elapsed: float, app_config, raw_list: list,
         "base_url": info.get("base_url", ""),
         "messages": _messages(prompt, info.get("adapter", "")),
         "output": text[:MAX_RAW],
+        "reasoning": reasoning_of(raw_list)[:MAX_RAW],
+        "parts": parts or [],
         "raw_response": [r if len(json.dumps(r, ensure_ascii=False, default=str)) <= MAX_RAW else {"truncated": True}
                          for r in (raw_list or [])],
         "elapsed_seconds": round(elapsed, 3),
@@ -222,7 +302,38 @@ def record(rec: dict) -> None:
 
 # ---------------------------------------------------------------- 接到上游
 
-def _with_step(fn, step: str, task_arg: bool = False):
+def note_use(note: str, ctx: dict | None = None) -> None:
+    """记下程序怎么用了这一步最后一次调用的输出（写一行 {"kind": "use"}）。"""
+    ctx = ctx if ctx is not None else (_ctx.get() or {})
+    ref = ctx.get("last_id")
+    if not ref or not note:
+        return
+    try:
+        path = task_file(ctx["task_id"]) if ctx.get("task_id") else ui_file()
+        append(path, {"kind": "use", "ref": ref, "note": note, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                      "ts": round(time.time(), 3), "task_id": ctx.get("task_id") or ""})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@contextlib.contextmanager
+def step(name: str, task_id: str | None = None, parts=None, prompt_vars=None):
+    """外壳自己调用大模型时（AI 导演、按字数改写）标明步骤：with llmlog.step("director", task_id) as ctx: …"""
+    cur = _ctx.get() or {}
+    new = dict(cur, step=name, attempt=0)
+    new.pop("last_id", None)
+    if task_id is not None:
+        new["task_id"] = task_id
+    new["parts"] = parts
+    new["prompt_vars"] = prompt_vars
+    token = _ctx.set(new)
+    try:
+        yield new
+    finally:
+        _ctx.reset(token)
+
+
+def _with_step(fn, step: str, task_arg: bool = False, vars_fn=None, use_fn=None):
     def wrapper(*args, **kwargs):
         cur = _ctx.get() or {}
         new = dict(cur)
@@ -232,9 +343,22 @@ def _with_step(fn, step: str, task_arg: bool = False):
         elif not cur.get("step"):
             new["step"] = step
         new["attempt"] = 0
+        new.pop("last_id", None)
+        new.pop("parts", None)
+        if vars_fn:
+            try:
+                new["prompt_vars"] = vars_fn(*args, **kwargs)
+            except Exception:  # noqa: BLE001
+                pass
         token = _ctx.set(new)
         try:
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            if use_fn:
+                try:
+                    note_use(use_fn(result, *args, **kwargs), new)
+                except Exception:  # noqa: BLE001
+                    pass
+            return result
         finally:
             _ctx.reset(token)
     wrapper.__wrapped__ = fn
@@ -260,7 +384,10 @@ def _wrap_generate_response(fn):
             raise
         finally:
             _raw.reset(token)
-            record(make_record(str(prompt), out, time.perf_counter() - t0, app_config, raw, ctx, err))
+            rec = make_record(str(prompt), out, time.perf_counter() - t0, app_config, raw, ctx, err)
+            if ctx is not None and isinstance(ctx, dict):
+                ctx["last_id"] = rec["id"]
+            record(rec)
     _generate_response.__wrapped__ = fn
     _generate_response._svf_llm = True
     return _generate_response
@@ -288,6 +415,41 @@ def _hook_openai() -> None:
     Completions.create = create
 
 
+def _terms_vars(video_subject="", video_script="", amount=5, *args, **kwargs):
+    try:
+        from app.utils import utils
+        script = utils.remove_pause_tags(video_script or "").strip()
+    except Exception:  # noqa: BLE001
+        script = str(video_script or "").strip()
+    return [("视频主题", video_subject, "### Video Subject\n"), ("文案（写文案这一步的输出）", script, "### Video Script\n"),
+            ("关键词个数", str(amount), "Generate ")]
+
+
+def count_chars(text: str) -> int:
+    return len(re.findall(r"[\u3400-\u9fff]", text or "")) + len(re.findall(r"[A-Za-z]+|\d+", text or ""))
+
+
+def _script_use(result, *args, **kwargs):
+    if not result:
+        return "没有拿到可用的文案（每次失败上游会再试，几次都失败时任务停在「写文案」）。"
+    lr = (_ctx.get() or {}).get("length_result") or {}
+    if lr.get("revised"):
+        return (f"程序数了字数：这次写了 {lr.get('first_chars')} 字，目标约 {lr.get('target_chars')} 字，偏差超过 ±15%，"
+                f"所以请模型改写了一次（见下一次调用「按字数改写文案」），最终用的是改写后的 {lr.get('final_chars')} 字文案。")
+    return (f"取作视频文案（{count_chars(result)} 字）：程序先去掉 * # 和方括号、圆括号里的内容，再交给配音、字幕和画面；"
+            "任务目录 script.json 里的 script 就是它。")
+
+
+def _terms_use(result, *args, **kwargs):
+    if not result:
+        return "没解析出关键词（应该返回 JSON 字符串数组）。"
+    return f"解析成搜索关键词列表 {json.dumps(result, ensure_ascii=False)}，拿去素材站搜视频。"
+
+
+VARS = {"terms": _terms_vars}
+USES = {"script": _script_use, "terms": _terms_use}
+
+
 def install() -> None:
     if _INSTALLED[0]:
         return
@@ -296,15 +458,15 @@ def install() -> None:
     from app.services import task as task_service
     if not getattr(llm._generate_response, "_svf_llm", False):
         llm._generate_response = _wrap_generate_response(llm._generate_response)
-    for name, step in (("generate_script", "script"), ("generate_terms", "terms"),
-                       ("generate_social_metadata", "social"), ("test_connection", "test")):
+    for name, step_name in (("generate_script", "script"), ("generate_terms", "terms"),
+                            ("generate_social_metadata", "social"), ("test_connection", "test")):
         fn = getattr(llm, name, None)
         if fn and not getattr(fn, "_svf_llm", False):
-            setattr(llm, name, _with_step(fn, step))
-    for name, step in (("generate_script", "script"), ("generate_terms", "terms")):
+            setattr(llm, name, _with_step(fn, step_name, vars_fn=VARS.get(step_name), use_fn=USES.get(step_name)))
+    for name, step_name in (("generate_script", "script"), ("generate_terms", "terms")):
         fn = getattr(task_service, name, None)
         if fn and not getattr(fn, "_svf_llm", False):
-            setattr(task_service, name, _with_step(fn, step, task_arg=True))
+            setattr(task_service, name, _with_step(fn, step_name, task_arg=True))
     _hook_openai()
 
 
@@ -329,18 +491,27 @@ def adopt_ui_calls(task_id: str, script: str, within: float = 6 * 3600) -> int:
     key = _norm(script)[:60]
     for i in range(len(calls) - 1, -1, -1):
         c = calls[i]
-        if c.get("step") == "script" and c.get("ok") and now - float(c.get("ts") or 0) < within \
-                and key and key in _norm(c.get("output") or ""):
+        if c.get("kind") != "use" and c.get("step") in ("script", "revise") and c.get("ok") \
+                and now - float(c.get("ts") or 0) < within and key and key in _norm(c.get("output") or ""):
             hit = i
             break
     if hit is None:
         return 0
+    if calls[hit].get("step") == "revise":   # 文案是「按字数改写」后的：从它前面那次写文案开始复制
+        for j in range(hit - 1, -1, -1):
+            if calls[j].get("kind") != "use" and calls[j].get("step") == "script":
+                hit = j
+                break
     picked = [calls[hit]]
     for c in calls[hit + 1:]:
         if float(c.get("ts") or 0) - float(calls[hit].get("ts") or 0) > 300:
             break
-        if c.get("step") == "terms":
+        if c.get("kind") == "use" or c.get("step") in ("terms", "revise", "script"):
+            if c.get("step") == "script" and c.get("kind") != "use" and c.get("ok"):
+                break   # 又写了一段新文案，不属于这一段
             picked.append(c)
+    ids = {c.get("id") for c in picked if c.get("kind") != "use"}
+    picked = [c for c in picked if c.get("kind") != "use" or c.get("ref") in ids]
     n = 0
     for c in picked:
         c = dict(c, task_id=task_id, from_ui=True)

@@ -117,6 +117,9 @@ RULES = [
     (r"(?P<what>final video render|知识卡片快速通道) still running: elapsed=(?P<s>\d+)s", "render", "note", "仍在渲染，已用 {s} 秒"),
     (r"知识卡片快速通道：成片", "render", "done", "成片写好了"),
     (r"(?:目标时长 \d+ 秒|实际配音 [\d.]+ 秒)", "audio", "note", "{_raw}"),
+    (r"字数控制：", "script", "note", "{_raw}"),
+    (r"AI 导演：", "materials", "note", "{_raw}"),
+    (r"AI 插图：", "materials", "note", "{_raw}"),
 ]
 RULES = [(re.compile(p), step, act, tpl) for p, step, act, tpl in RULES]
 FINISH_RE = re.compile(r"task \S+ finished, generated (\d+) videos")
@@ -283,4 +286,7 @@ def duration_line(extra: dict) -> str:
             diff = float(a) - float(t)
             s += f"，比目标{'长' if diff > 0 else '短'} {abs(diff):.0f} 秒"
         parts.append(s)
-    return "；".join(parts)
+    if extra.get("length_mode"):
+        from .duration import length_line
+        parts.append(length_line(extra))
+    return "；".join(p for p in parts if p)

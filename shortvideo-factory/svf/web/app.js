@@ -67,7 +67,7 @@
   });
 
   // ---------- 栏目 ----------
-  const TABS = ["studio", "guide", "status"];
+  const TABS = ["studio", "review", "calls", "guide", "status"];
   let tab = TABS.includes(BOOT.settings.tab) ? BOOT.settings.tab : "studio";
   function switchTab(name, opts) {
     tab = TABS.includes(name) ? name : "studio";
@@ -75,6 +75,8 @@
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.dataset.view === tab));
     post("/api/settings", { tab }).catch(() => {});
     if (tab === "guide") guide.renderGuide(opts && opts.page);
+    if (tab === "review") review.render(opts || {});
+    if (tab === "calls") calls.render(opts || {});
     if (tab === "status") renderStatus();
   }
   document.querySelectorAll(".tabs button").forEach(b => { b.onclick = () => switchTab(b.dataset.tab); });
@@ -183,8 +185,12 @@
   document.title = `AI 短视频工厂 ${BOOT.version}`;
   const guide = window.SVFGuide({ api, toast, switchTab, saveSettings: v => post("/api/settings", v).catch(() => {}),
     initialPage: BOOT.settings.guide_page });
+  const review = window.SVFReview({ api, toast });
+  const calls = window.SVFCalls({ api, toast });
   applyZoom();
   switchTab(tab);
   pollStudio();
-  window.SVFApp = { switchTab, setZoom, renderStatus };
+  // 生成界面（iframe 里的 Streamlit 页面）上的「审片 / 分镜」「模型调用」链接经 inject.js 调这里：SVFApp.openTask("review", 任务 ID)
+  const openTask = (name, task, extra) => switchTab(name, Object.assign({ task }, extra || {}));
+  window.SVFApp = { switchTab, setZoom, renderStatus, openTask };
 })();

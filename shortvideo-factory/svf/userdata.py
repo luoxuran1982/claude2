@@ -186,7 +186,7 @@ class ShellSettings:
             self.values["zoom"] = clamp_zoom(changes["zoom"])
         if "guide_page" in changes and isinstance(changes["guide_page"], str):
             self.values["guide_page"] = changes["guide_page"][:300]
-        if "tab" in changes and changes["tab"] in ("studio", "guide", "status"):
+        if "tab" in changes and changes["tab"] in ("studio", "review", "calls", "guide", "status"):
             self.values["tab"] = changes["tab"]
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.values, ensure_ascii=False, indent=2), encoding="utf-8")

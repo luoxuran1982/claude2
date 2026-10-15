@@ -10,6 +10,8 @@
 <script src="/ui/zoom.js" defer></script>
 <script src="/ui/md.js" defer></script>
 <script src="/ui/guide.js" defer></script>
+<script src="/ui/review.js" defer></script>
+<script src="/ui/calls.js" defer></script>
 <script src="/ui/app.js" defer></script>
 </head>
 <body>
@@ -20,6 +22,8 @@
   </div>
   <nav class="tabs" role="tablist" aria-label="栏目">
     <button role="tab" data-tab="studio" id="tab-studio">视频生成</button>
+    <button role="tab" data-tab="review" id="tab-review" title="生成完成后逐页查看画面：审片（网格总览）和分镜（逐镜详情）">审片 / 分镜</button>
+    <button role="tab" data-tab="calls" id="tab-calls" title="每次大模型调用：发了什么、模型想了什么、返回了什么、程序怎么用">模型调用</button>
     <button role="tab" data-tab="guide" id="tab-guide">使用指南</button>
     <button role="tab" data-tab="status" id="tab-status">运行状态</button>
   </nav>
@@ -51,6 +55,34 @@
       </div>
     </div>
     <iframe id="studio-frame" title="视频生成界面（MoneyPrinterTurbo）" hidden></iframe>
+  </section>
+
+  <!-- 审片 / 分镜：生成完成后只读查看每一页画面（数据来自任务目录的 svf_storyboard.json，见 svf/review.py） -->
+  <section class="view" data-view="review">
+    <div class="rv-wrap">
+      <div class="rv-bar">
+        <label class="rv-pick">任务 <select id="rv-task" aria-label="选择任务"></select></label>
+        <div class="seg" role="tablist" aria-label="视图">
+          <button type="button" data-rvmode="grid" id="rv-mode-grid" title="一屏铺开所有画面，快速扫一遍">审片（总览）</button>
+          <button type="button" data-rvmode="detail" id="rv-mode-detail" title="左边分镜列表，右边这一镜的大图和全部数据">分镜（逐镜详情）</button>
+        </div>
+        <button class="btn small" id="rv-refresh" type="button">↻ 刷新</button>
+      </div>
+      <div id="rv-info" class="rv-info"></div>
+      <div id="rv-body"><p class="muted">正在读取…</p></div>
+    </div>
+  </section>
+
+  <!-- 模型调用：按时间列出一个任务的每次大模型调用（数据来自任务目录的 llm_calls.jsonl） -->
+  <section class="view" data-view="calls">
+    <div class="lc-wrap">
+      <div class="rv-bar">
+        <label class="rv-pick">任务 <select id="lc-task" aria-label="选择任务"></select></label>
+        <button class="btn small" id="lc-refresh" type="button">↻ 刷新</button>
+      </div>
+      <div id="lc-legend" class="lc-legend"></div>
+      <div id="lc-body"><p class="muted">正在读取…</p></div>
+    </div>
   </section>
 
   <!-- 使用指南：README、UPSTREAM、docs/ 全部文档，附件，源码只读查看与下载 -->

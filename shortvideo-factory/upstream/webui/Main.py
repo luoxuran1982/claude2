@@ -1334,6 +1334,8 @@ def _render_task_table(filtered_tasks, key_prefix):
                 )  # [补丁 P7] 显示「已取消」「已中断」
                 row_cols[1].write(_format_task_time(task["mtime"]))
                 row_cols[2].write(_format_task_subject(task["subject"]))
+                if globals().get("svf_webui"):  # [补丁 P9] 「审片 / 分镜」「模型调用」入口（在外壳的顶层标签页里打开）
+                    svf_webui.render_task_links(row_cols[2], task_id, task["task_path"])
                 row_cols[3].write(f"{task['progress']}%")
 
                 action_cols = row_cols[4].columns(

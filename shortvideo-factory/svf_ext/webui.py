@@ -12,17 +12,19 @@ import html
 import json
 import re
 
-from . import desktop, duration, explain, llmlog, tasks
-from . import (CARD_GROUP_LABEL, CARD_SOURCE_LABELS, CARD_SOURCES, DEFAULT_THEME, HYBRID_STOCK, KNOWLEDGE_CARDS,
-               THEME_CONFIG_KEY, THEME_LABELS, hints)
+from . import desktop, duration, explain, llmlog, shots, tasks
+from . import (AI_SOURCES, AI_THEME_CONFIG_KEY, CARD_GROUP_LABEL, CARD_SOURCE_LABELS, CARD_SOURCES, CARDS_AI, CARDS_ILLUS,
+               DEFAULT_AI_THEME, DEFAULT_THEME, HYBRID_MODE_KEY, HYBRID_STOCK, KNOWLEDGE_CARDS, THEME_CONFIG_KEY, THEME_LABELS,
+               hints)
 from .desktop import open_path  # noqa: F401  （1.0.2 的接口，保留兼容）
 
 hints.install_log_sink()
 def _install_hooks() -> None:
     """接到上游（只装一次）：防重复提交 / 取消 / 残留任务（tasks）、大模型调用记录（llmlog）、目标时长（本模块）。"""
     tasks.install()
+    install_duration_hooks()   # 先包「检查字数」，llmlog 再包在外面：按字数改写算在「写文案」这一步里面，用途说明能看到改写结果
     llmlog.install()
-    install_duration_hooks()
+    shots.install()
 
 
 
@@ -39,30 +41,64 @@ def tts_failure_hint() -> str:
     return hints.tts_failure_hint()
 
 
+def _set_app(config, key, value) -> None:
+    updater = getattr(config, "update_config_nonblocking", None)   # 视频生成中改设置时上游会排队，任务结束再生效
+    if updater:
+        updater(config.app, key, value)
+    else:
+        config.app[key] = value
+
+
+SOURCE_HELP = {
+    KNOWLEDGE_CARDS: "规则切分：程序按标点把文案切成句子，按句子的特征（「第一…第二…」「A…而 B…」「先…再…」、数字）选版式，"
+                     "用句子开头的主语或全文关键词当标题。不调用大模型画分镜、不联网、不花钱；标题有时是半截句子，"
+                     "也画不出表格、代码这类要先理解内容的版式。",
+    CARDS_AI: "AI 导演：写完文案后多调用一次你配置的大模型，请它把文案设计成分镜——每页起一个完整的短标题、选版式"
+              "（标题、要点、流程、对比、表格、代码、引言、数字、图表）、整理出表格的表头和行、代码片段等结构化数据，"
+              "并写明每页对应哪几句原文。程序校验它返回的 JSON，不合格重试一次，还不行就退回规则切分（日志里写原因）。"
+              "每页的时间仍按配音和字幕对齐。多一次大模型调用（按你的服务商计费，通常几分钱以内）。",
+    CARDS_ILLUS: "卡片 + AI 插图：在 AI 导演的基础上，导演标出最多 3 页最适合配图的概念页，调用你在「设置 → 素材来源设置」里配置的"
+                 "「OpenAI 兼容文生图」生成插图，铺在那一页作背景；其余页照常由程序画。文生图按张计费。",
+}
+
+
 def render_source_options(st, config, params) -> None:
-    """视频来源选了「程序生成」组时，在下拉下面显示说明和卡片配色。"""
+    """视频来源选了「程序生成」组时，在下拉下面显示说明、卡片主题等设置。"""
     source = params.video_source
     if source not in CARD_SOURCES:
         return
-    if source == KNOWLEDGE_CARDS:
-        st.caption("按配音和字幕的时间把文案分成若干页，由程序画出图文讲解页（标题、编号要点、对比两栏、流程箭头、关键数字、"
-                   "关键词高亮），每页缓慢缩放或平移。不联网、不需要素材钥匙、不花钱。适合讲概念、原理、步骤的知识类主题。")
+    if source in SOURCE_HELP:
+        st.caption(SOURCE_HELP[source])
     else:
         stock = HYBRID_STOCK[source]
         key = f"{stock}_api_keys"
         has_key = bool(config.app.get(key))
         st.caption(f"先在 {stock.capitalize()} 搜索素材；搜到的够用就全部用素材，不够或搜不到时，用知识卡片补齐（不会因此失败）。"
                    + ("" if has_key else f"还没填 {stock.capitalize()} 钥匙，这次会全部用知识卡片。"))
-    names = list(THEME_LABELS)
-    current = str(config.app.get(THEME_CONFIG_KEY, DEFAULT_THEME) or DEFAULT_THEME)
-    theme = st.selectbox("卡片配色", names, index=names.index(current) if current in names else 0,
-                         format_func=THEME_LABELS.get, key="svf_card_theme_select")
-    if theme != current:
-        updater = getattr(config, "update_config_nonblocking", None)   # 视频生成中改设置时上游会排队，任务结束再生效
-        if updater:
-            updater(config.app, THEME_CONFIG_KEY, theme)
+        modes = ["rule", "ai"]
+        cur_mode = str(config.app.get(HYBRID_MODE_KEY, "rule") or "rule")
+        mode = st.selectbox("补齐用的卡片", modes, index=modes.index(cur_mode) if cur_mode in modes else 0,
+                            format_func={"rule": "规则切分（不调用大模型）", "ai": "AI 导演（多一次大模型调用）"}.get,
+                            key="svf_hybrid_mode_select")
+        if mode != cur_mode:
+            _set_app(config, HYBRID_MODE_KEY, mode)
+    if source == CARDS_ILLUS:
+        from . import illustrate
+        if not illustrate.configured(config.app):
+            st.warning(f"{illustrate.NOT_CONFIGURED}。没配置时这次会自动退回纯卡片（AI 导演照常）。")
         else:
-            config.app[THEME_CONFIG_KEY] = theme
+            st.caption(f"文生图：{config.app.get('openai_image_model', '')} @ {config.app.get('openai_image_base_url', '')}，"
+                       f"每个视频最多 {illustrate.MAX_IMAGES} 张，按张计费。")
+    ai = source in AI_SOURCES or (source in HYBRID_STOCK and str(config.app.get(HYBRID_MODE_KEY, "rule")) == "ai")
+    key, default = (AI_THEME_CONFIG_KEY, DEFAULT_AI_THEME) if ai else (THEME_CONFIG_KEY, DEFAULT_THEME)
+    names = list(THEME_LABELS)
+    current = str(config.app.get(key, default) or default)
+    theme = st.selectbox("卡片主题（AI 导演默认「工坊深色」，规则切分默认「课堂蓝」，各自记住）", names,
+                         index=names.index(current) if current in names else names.index(default),
+                         format_func=THEME_LABELS.get, key="svf_ai_theme_select" if ai else "svf_card_theme_select")
+    if theme != current:
+        _set_app(config, key, theme)
+    st.caption("生成完成后，顶部「审片 / 分镜」里能一次看完每一页画面；「模型调用」里能看到导演收到的提示词和返回的分镜 JSON。")
 
 
 def render_key_hint(st, provider: str, value: str) -> None:
@@ -262,6 +298,14 @@ def _voice_rate_from_config() -> float:
         return 1.0
 
 
+def _length_mode() -> str:
+    try:
+        from app.config import config
+        return duration.normalize_mode(config.ui.get(duration.MODE_KEY, duration.DEFAULT_MODE))
+    except Exception:  # noqa: BLE001
+        return duration.DEFAULT_MODE
+
+
 def _task_dir(task_id: str):
     from pathlib import Path
     from app.utils import utils
@@ -279,19 +323,46 @@ def install_duration_hooks() -> None:
 
         def build_script_prompt(video_subject, language="", *args, **kwargs):
             prompt = orig_build(video_subject, language, *args, **kwargs)
-            ctx = llmlog._ctx.get() or {}
+            ctx = llmlog._ctx.get()
             p = None
-            if ctx.get("task_id"):
+            mode = _length_mode()
+            if ctx and ctx.get("task_id"):
                 info = duration.read_task(_task_dir(ctx["task_id"]))
                 if info.get("target_seconds"):
                     p = info
+                    mode = duration.normalize_mode(info.get("length_mode") or mode)
             if p is None:
                 p = duration.plan(_target_from_config(), duration.language_of(video_subject, language),
                                   _voice_rate_from_config())
-            return prompt + duration.prompt_addition(p) if p else prompt
+            addition = duration.prompt_addition(p, mode) if p else ""
+            if ctx is not None:   # 给「模型调用」页标出提示词里哪些是程序填进去的
+                paragraph = kwargs.get("paragraph_number", args[0] if args else 1)
+                extra = kwargs.get("video_script_prompt", args[1] if len(args) > 1 else "")
+                ctx["prompt_vars"] = [("视频主题", video_subject, "- video subject: "),
+                                      ("段落数", str(llm._normalize_script_paragraph_number(paragraph))
+                                       if hasattr(llm, "_normalize_script_paragraph_number") else str(paragraph),
+                                       "- number of paragraphs: "),
+                                      ("语言", language, "- language: "), ("你填的额外要求", extra, ""),
+                                      ("程序加的字数要求（按目标时长换算，字数控制方式：" + duration.MODE_LABELS[mode] + "）",
+                                       addition, "", "prog")]
+                ctx["length"] = {"mode": mode, "plan": p}
+            return prompt + addition
         build_script_prompt._svf_duration = True
         build_script_prompt.__wrapped__ = orig_build
         llm.build_script_prompt = build_script_prompt
+
+    gen = llm.generate_script
+    if not getattr(gen, "_svf_duration", False):
+        def generate_script(*args, **kwargs):
+            script = gen(*args, **kwargs)
+            try:
+                script = _check_length(script, args, kwargs)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"检查文案字数失败：{exc}")
+            return script
+        generate_script._svf_duration = True
+        generate_script.__wrapped__ = gen
+        llm.generate_script = generate_script
 
     fn = task_service.generate_audio
     if not getattr(fn, "_svf_duration", False):
@@ -323,6 +394,83 @@ def install_duration_hooks() -> None:
         task_service.generate_audio = generate_audio
 
 
+def _format_like_upstream(text: str) -> str:
+    """和上游 generate_script 的 format_response 一样清理模型输出：去掉 * # 和方括号、圆括号里的内容。"""
+    text = (text or "").replace("*", "").replace("#", "")
+    text = re.sub(r"\[.*?\]", "", text)
+    text = re.sub(r"\(.*?\)", "", text)
+    return text.strip()
+
+
+def _check_length(script: str, args, kwargs) -> str:
+    """字数控制「程序检查」：数字数，偏差超过 ±15% 时请模型改写一次。三档都把目标和实际字数写进任务信息和日志。"""
+    from loguru import logger
+    from app.services import llm
+    ctx = llmlog._ctx.get() or {}
+    task_id = ctx.get("task_id") or ""
+    subject = kwargs.get("video_subject", args[0] if args else "")
+    language = kwargs.get("language", args[1] if len(args) > 1 else "")
+    mode = _length_mode()
+    p = None
+    if task_id:
+        info = duration.read_task(_task_dir(task_id))
+        if info.get("target_seconds"):
+            p = info
+            mode = duration.normalize_mode(info.get("length_mode") or mode)
+    if p is None:
+        p = duration.plan(_target_from_config(), duration.language_of(subject, language), _voice_rate_from_config())
+    rec = {"length_mode": mode}
+    if not script or not p:
+        if task_id:
+            duration.write_task(_task_dir(task_id), rec)
+            logger.info(duration.length_line(rec))
+        return script
+    lang = p["lang"]
+    target = int(p["target_chars"])
+    first = duration.count_units(script, lang)
+    rec.update(target_chars=target, unit=p["unit"], first_chars=first, final_chars=first, revised=False)
+    final = script
+    if mode == "check" and duration.needs_revision(first, target):
+        prompt, variables = duration.revise_prompt(script, first, target, lang)
+        with llmlog.step("revise", task_id or None, prompt_vars=variables) as sctx:
+            out = llm._generate_response(prompt)
+            text = _format_like_upstream(out) if isinstance(out, str) and not out.startswith("Error:") else ""
+            n2 = duration.count_units(text, lang) if text else 0
+            if text and abs(n2 - target) < abs(first - target):
+                final = text
+                rec.update(final_chars=n2, revised=True)
+                llmlog.note_use(f"取作改写后的文案：{first} → {n2} {p['unit']}（目标约 {target}）。之后的配音、字幕、画面都用它。", sctx)
+            else:
+                rec["revise_failed"] = "模型没返回内容" if not text else f"改写后 {n2} {p['unit']}，没有更接近目标"
+                llmlog.note_use(f"没有采用：{rec['revise_failed']}，仍用第一次写的文案。", sctx)
+    if task_id:
+        duration.write_task(_task_dir(task_id), rec)
+    if isinstance(llmlog._ctx.get(), dict):
+        llmlog._ctx.get()["length_result"] = rec   # 「写文案」这次调用的用途说明会提到改写
+    logger.info(duration.length_line(rec))
+    return final
+
+
+def render_length_mode(st, config) -> None:
+    """「字数控制方式」三档（目标时长下面）。"""
+    current = duration.normalize_mode(config.ui.get(duration.MODE_KEY, duration.DEFAULT_MODE))
+    modes = list(duration.MODES)
+    mode = st.selectbox("字数控制方式", modes, index=modes.index(current), format_func=duration.MODE_LABELS.get,
+                        key="svf_length_mode_select",
+                        help="严格：提示词要求模型在规定字数区间内，推理模型会逐字数数，思考 token 多、慢、贵；"
+                             "程序检查（推荐）：只告诉模型大约多少字，写完由程序数，偏差超过 ±15% 才请模型改写一次；"
+                             "不控制：不提字数，只按段落数。详见使用指南「字数控制方式」。")
+    if mode != current:
+        updater = getattr(config, "update_config_nonblocking", None)
+        if updater:
+            updater(config.ui, duration.MODE_KEY, mode)
+        else:
+            config.ui[duration.MODE_KEY] = mode
+    st.caption({"strict": "字数最准，但模型要花大量思考 token 逐字数数（实测可达输出的九成），慢、贵。",
+                "check": "模型只按「大约」写；程序数完字数，偏差超过 ±15% 再请它改写一次。",
+                "off": "提示词里不提字数，视频长短看模型发挥。"}[mode])
+
+
 def render_target_duration(st, config, params) -> None:
     """「目标时长（秒）」：30 / 60 / 90 / 120 / 自定义；换算成文案字数写进写文案的提示词。"""
     current = int(config.ui.get(duration.CONFIG_KEY, 0) or 0)
@@ -348,6 +496,7 @@ def render_target_duration(st, config, params) -> None:
     if p:
         st.caption(f"约 {p['target_chars']} {p['unit']}（{p['chars_per_second']:.1f} {p['unit'][-1] if p['lang'] == 'zh' else '词'}/秒，"
                    f"{p['basis']}）。写文案时告诉大模型这个字数；段落数照旧。")
+        render_length_mode(st, config)
 
 
 def note_submission(task_id: str, params) -> None:
@@ -359,6 +508,7 @@ def note_submission(task_id: str, params) -> None:
                 "user_script": bool(script.strip())}
         p = duration.plan(_target_from_config(), lang, getattr(params, "voice_rate", 1.0))
         info.update(p or {"target_seconds": 0})
+        info["length_mode"] = _length_mode()
         duration.write_task(_task_dir(task_id), info)
         if script.strip() and llmlog.adopt_ui_calls(task_id, script):
             duration.write_task(_task_dir(task_id), {"script_from_ui": True})
@@ -411,8 +561,33 @@ def explain_markdown(res: dict, info: dict) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def task_links_html(task_id: str, storyboard: bool = True, calls: bool = True) -> str:
+    """跳到外壳顶层标签页的链接（点击由 svf/web/inject.js 处理）。"""
+    tid = html.escape(task_id, quote=True)
+    out = []
+    if storyboard:
+        out.append(f'<a href="#" class="svf-goto" data-tab="review" data-mode="grid" data-task="{tid}">🎞️ 审片 / 分镜</a>')
+    if calls:
+        out.append(f'<a href="#" class="svf-goto" data-tab="calls" data-task="{tid}">🤖 模型调用</a>')
+    return '<span class="svf-links">' + "　".join(out) + "</span>" if out else ""
+
+
+def render_task_links(col, task_id: str, task_path: str) -> None:
+    """[补丁 P9] 任务管理每行的主题下面：有分镜清单就给「审片 / 分镜」，有调用记录就给「模型调用」。"""
+    try:
+        from pathlib import Path
+        d = Path(task_path)
+        sb = (d / shots.MANIFEST).is_file()
+        calls = (d / llmlog.FILE_NAME).is_file()
+        if sb or calls:
+            col.markdown(task_links_html(task_id, sb, calls), unsafe_allow_html=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def render_task_insights(st, task_id: str, log_records: list) -> None:
-    """生成页：原始日志上方的「日志解读」和「大模型调用记录」。原始日志本身不动（只加了行号，方便对照）。"""
+    """生成页：原始日志上方的「日志解读」，以及去「审片 / 分镜」「模型调用」的链接。原始日志本身不动（只加了行号，方便对照）。
+    1.1.0 起大模型调用记录移到顶层标签页「模型调用」，生成页只留链接。"""
     info = _task_info(task_id)
     res = explain.explain(log_records or [], {"user_script": info.get("user_script"), "source": info.get("source"),
                                               "script_from_ui": info.get("script_from_ui")})
@@ -427,38 +602,10 @@ def render_task_insights(st, task_id: str, log_records: list) -> None:
             st.caption("还没有日志（设置里关掉了「显示日志」时这里也没有）。")
         st.markdown(explain_markdown(res, info))
         st.caption("「第 N 行」对应下面原始日志左边的行号。heartbeat 类的 still running 行只是「还在运行」的报平安。")
-    render_llm_calls(st, task_id)
+    n = len(llmlog.read_task(task_id))
+    st.markdown(task_links_html(task_id) + f'<span class="svf-links-note">　这个任务调用了 {n} 次大模型；画面和调用详情在顶部这两个标签页里看。</span>',
+                unsafe_allow_html=True)
     st.caption("原始日志")
-
-
-def render_llm_calls(st, task_id: str) -> None:
-    calls = llmlog.read_task(task_id)
-    label = f"大模型调用记录（{len(calls)} 次，原汁原味）" if calls else "大模型调用记录（这个任务没有调用大模型）"
-    with st.expander(label, expanded=False):
-        if not calls:
-            st.caption("自己写好文案、又用「知识讲解卡片」时，整个任务都不需要大模型。记录文件：任务目录的 llm_calls.jsonl。")
-            return
-        st.caption("每次调用一条：发给模型的完整提示词、模型返回的完整原始输出、耗时、token 用量。API Key 不会出现在记录里。"
-                   "文件在任务目录的 llm_calls.jsonl。")
-        for k, c in enumerate(calls, 1):
-            usage = c.get("usage") or {}
-            tok = (f" · token：输入 {usage.get('prompt_tokens', '?')} / 输出 {usage.get('completion_tokens', '?')} / "
-                   f"合计 {usage.get('total_tokens', '?')}") if usage else " · token 用量：接口没有返回"
-            st.markdown(f"**#{k} {_md(c.get('step_label', ''))}**（第 {c.get('attempt', 1)} 次尝试，"
-                        f"{'成功' if c.get('ok') else '失败'}）· {_md(c.get('provider_label') or c.get('provider') or '?')} / "
-                        f"`{_md(c.get('model') or '?')}` · {c.get('elapsed_seconds', 0):.1f} 秒{tok} · {c.get('time', '')}"
-                        + ("　（在界面上点「生成文案」时调用的）" if c.get("from_ui") else ""))
-            if c.get("base_url"):
-                st.caption(f"接口地址：{c['base_url']}")
-            for m in c.get("messages") or []:
-                st.caption(f"发给模型的 {m.get('role')} 消息（原文）")
-                st.code(m.get("content", ""), language=None, wrap_lines=True)
-            st.caption("模型返回的原始输出" + ("" if c.get("ok") else f"（出错：{c.get('error', '')}）"))
-            st.code(c.get("output", "") or "（空）", language=None, wrap_lines=True)
-            if c.get("raw_response"):
-                st.caption("接口返回的原始 JSON")
-                st.code(json.dumps(c["raw_response"], ensure_ascii=False, indent=2)[:60000], language="json", wrap_lines=True)
-            st.divider()
 
 
 try:   # 导入上游失败时（只跑外壳单元测试）跳过
