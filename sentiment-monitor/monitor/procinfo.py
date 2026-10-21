@@ -131,8 +131,16 @@ def _row(role: str, pid: int, kind: str):
             "mem_mib": round(b / MIB, 1) if b is not None else None, "sampled_at": time.time()}
 
 
-def snapshot(browser=None, browser_mode: str = "") -> dict:
-    """browser：lifecycle.BrowserWindow；browser_mode：open() 的返回值（edge/chrome/default/none）。"""
+def snapshot(browser=None, browser_mode: str = "", native: bool = False) -> dict:
+    """browser：lifecycle.BrowserWindow；browser_mode：open() 的返回值（edge/chrome/default/none）；
+    native：v0.4 原生窗口模式（窗口和后台是同一个进程）。"""
+    if native:
+        rows = [_row("应用进程（原生窗口 + HTTP 接口 + 采集调度，同一个进程）", os.getpid(), "backend")]
+        notes = ["原生窗口模式：窗口由本进程直接创建，没有单独的窗口进程。"
+                 "macOS 的网页内容由系统的 WebKit 辅助进程（com.apple.WebKit.WebContent 等）渲染，"
+                 "它们由系统管理、不是本进程的子进程，这里不列出、不计入合计。"]
+        vals = [r["mem_mib"] for r in rows if r["mem_mib"] is not None]
+        return _result(rows, notes, vals)
     rows = [_row("后台服务（HTTP 接口 + 采集调度；采集任务是本进程内的线程）", os.getpid(), "backend")]
     notes = []
     proc = getattr(browser, "proc", None)
@@ -152,6 +160,10 @@ def snapshot(browser=None, browser_mode: str = "") -> dict:
     else:
         notes.append("应用窗口进程已结束或交给了已在运行的浏览器，不再列出。")
     vals = [r["mem_mib"] for r in rows if r["mem_mib"] is not None]
+    return _result(rows, notes, vals)
+
+
+def _result(rows, notes, vals) -> dict:
     return {
         "sampled_at": time.time(),
         "platform": sys.platform,
@@ -160,6 +172,6 @@ def snapshot(browser=None, browser_mode: str = "") -> dict:
         "reader": "psutil" if psutil else "系统接口（/proc、ps 或 psapi）",
         "processes": rows,
         "total_mib": round(sum(vals), 1) if vals else None,
-        "workers": "采集任务在后台服务进程内以线程运行（collector 调度线程 + 最多 4 个 fetch 线程），线程共享后台的 PID，没有独立的工作进程。",
+        "workers": "采集任务在后台服务进程内以线程运行（collector 调度线程 + 最多 12 个 fetch 线程），线程共享后台的 PID，没有独立的工作进程。",
         "notes": notes,
     }

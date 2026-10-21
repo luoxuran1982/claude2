@@ -24,6 +24,7 @@ class Collector:
         # 定时调度同时最多提交 max_parallel 个（设置里调）；「全部立即抓取」时排队，最多 12 个线程同时跑
         self.pool = ThreadPoolExecutor(max_workers=12, thread_name_prefix="fetch")
         self.last_rsshub_start = 0
+        self.notifier = None  # v0.4：原生窗口模式下由 desktop.notify 发系统通知（网页通知在嵌入式引擎里不可用）
         self.thread = None
         self.last_cleanup = 0
         self.paused = False
@@ -207,6 +208,8 @@ class Collector:
         alert_id = self.store.add_alert(eid, aid, kind, level, msg)
         if alert_id:
             self.bus.publish("alert", self.store.alert(alert_id))
+            if self.notifier and self.store.settings()["notify_desktop"]:
+                self.notifier("舆情预警" if level != "danger" else "舆情预警 · 风险", msg)
 
 
 def _due(s, now) -> bool:

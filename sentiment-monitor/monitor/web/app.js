@@ -1161,8 +1161,8 @@ async function showSource(body, path) {
 const SETTINGS_SPEC = [
   ["启动与退出", [
     ["exit_grace_sec", "number", "退出前等待（秒）", "关闭窗口后，后台和采集在这么多秒后停止（留给刷新页面的时间）。本版本不提供关窗后继续在后台采集的常驻模式。"],
-    ["browser", "select", "打开页面用", "", [["auto", "自动（优先 Edge，其次 Chrome）"], ["edge", "Microsoft Edge"], ["chrome", "Google Chrome"], ["default", "系统默认浏览器"], ["none", "不自动打开"]]],
-    ["app_window", "bool", "使用独立应用窗口", "像桌面程序一样单独一个窗口，没有地址栏，关掉窗口即退出。下次启动生效。"],
+    ["browser", "select", "打开页面用", "下次启动生效。", [["auto", "自动（应用自己的原生窗口；不可用时用 Edge / Chrome）"], ["edge", "Microsoft Edge"], ["chrome", "Google Chrome"], ["default", "系统默认浏览器"], ["none", "不自动打开"]]],
+    ["app_window", "bool", "Edge/Chrome 用独立应用窗口", "只在原生窗口不可用、改用 Edge/Chrome 打开时有效：单独一个没有地址栏的窗口。下次启动生效。"],
   ]],
   ["网络", [
     ["proxy", "text", "网络代理", "例：http://127.0.0.1:7890。访问 Google 新闻、Yahoo 等海外源时需要；留空则使用系统代理。"],
@@ -1187,7 +1187,7 @@ const SETTINGS_SPEC = [
     ["alert_spike", "bool", "热度异动预警", ""],
     ["spike_min", "number", "异动最少条数", "近 1 小时至少这么多条才可能触发。"],
     ["spike_ratio", "number", "异动倍数", "近 1 小时条数 ≥ 前 23 小时平均每小时条数 × 该倍数。", null, 0.5],
-    ["notify_desktop", "bool", "桌面通知", "需要浏览器允许通知。"],
+    ["notify_desktop", "bool", "桌面通知", "原生窗口模式下由系统通知中心提醒（macOS 第一次会询问是否允许）；浏览器模式下需要浏览器允许通知。"],
     ["notify_sound", "bool", "提示音", ""],
   ]],
   ["显示", [
@@ -1213,7 +1213,7 @@ PAGES.settings = async () => {
     `<div class="card" style="margin-bottom:16px"><h3 style="margin-bottom:12px">维护</h3>
       <div class="form"><label class="k">数据目录</label><code style="overflow-wrap:anywhere">${esc(state.boot.data_dir)}</code>
       <label class="k">版本</label><span>v${esc(state.boot.version)}</span></div>
-      <div class="settings-actions"><button class="btn" id="btnNotify">允许桌面通知</button><button class="btn" id="btnDemo2">生成演示数据</button><button class="btn danger-ghost" id="btnClear">清空所有资讯和预警</button></div></div>
+      <div class="settings-actions"><button class="btn" id="btnNotify">${state.boot.native_window ? "测试桌面通知" : "允许桌面通知"}</button><button class="btn" id="btnDemo2">生成演示数据</button><button class="btn danger-ghost" id="btnClear">清空所有资讯和预警</button></div></div>
     <div style="position:sticky;bottom:12px;text-align:right"><button class="btn primary" id="btnSaveSettings">保存设置</button></div>`;
   $("#btnSaveSettings").onclick = async () => {
     const patch = {};
@@ -1225,6 +1225,10 @@ PAGES.settings = async () => {
     } catch (e) { errToast(e); }
   };
   $("#btnNotify").onclick = async () => {
+    if (state.boot.native_window) {
+      const r = await POST("/api/notify/test").catch((e) => ({ ok: false, error: e.message }));
+      return toast(r.ok ? "已发送一条测试通知；没看到的话，到「系统设置 → 通知」里允许「脚本编辑器」" : esc(r.error), r.ok ? "" : "error");
+    }
     if (!("Notification" in window)) return toast("当前浏览器不支持桌面通知");
     const p = await Notification.requestPermission();
     toast(p === "granted" ? "已允许桌面通知" : "浏览器未允许通知");

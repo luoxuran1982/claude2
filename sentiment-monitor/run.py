@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""启动舆情监控系统：启动后台服务并打开页面；关闭页面后后台自动退出。
+"""启动舆情监控系统：启动后台服务并打开应用窗口；关闭窗口后后台自动退出。
+
+v0.4 起优先用原生窗口（pywebview，见 monitor/desktop.py）：窗口在本进程的主线程里，HTTP 服务放到子线程。
+pywebview 不可用时退回 Edge/Chrome 的 --app 窗口（v0.1–v0.3 的方式），由看门狗判断何时退出。
 
     python run.py                 # 启动并打开应用窗口
     python run.py --port 8848     # 指定端口（默认 8848，被占用时自动换）
@@ -67,7 +70,7 @@ def main():
     if args.data_dir:
         os.environ["MONITOR_DATA_DIR"] = args.data_dir
 
-    from monitor import APP_NAME, __version__, paths
+    from monitor import APP_NAME, __version__, desktop, paths
     from monitor.lifecycle import BrowserWindow, Watchdog, on_console_close
     from monitor.server import App
 
@@ -101,6 +104,10 @@ def main():
 
     app.collector.start()
 
+    # HTTP 服务放到子线程：主线程要留给原生窗口（macOS 规定窗口必须在主线程里创建）
+    server_thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.5}, name="http", daemon=True)
+    server_thread.start()
+
     browser = BrowserWindow()
     app.browser = browser
     app.browser_mode = "none" if args.no_browser else ""
@@ -108,29 +115,30 @@ def main():
     watchdog = Watchdog(app.bus, browser, app.store.settings, app.shutdown)
     watchdog.start()
 
-    if not args.no_browser:
-        cfg = app.store.settings()
-        def open_window():
-            app.browser_mode = browser.open(url, cfg["browser"], cfg["app_window"])
-
-        threading.Timer(0.3, open_window).start()
-
     def on_signal(*_):
         app.shutdown("收到退出信号")
 
     signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)  # v0.4：被系统或 kill 结束时也走退出流程
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, on_signal)  # Windows 控制台 Ctrl+Break
     on_console_close(lambda: (browser.close(), app.shutdown("控制台窗口被关闭")))
 
     try:
-        httpd.serve_forever(poll_interval=0.5)
+        cfg = app.store.settings()
+        if args.no_browser:
+            pass
+        elif cfg["browser"] == "auto" and desktop.run_window(app, url):
+            app.shutdown("应用窗口已关闭")  # 窗口已关：已经在退出流程里时这一句什么也不做
+        else:
+            app.browser_mode = browser.open(url, cfg["browser"], cfg["app_window"])
+        while server_thread.is_alive():  # 等退出流程把 HTTP 服务停掉；用短超时循环，Ctrl+C 才能及时响应
+            server_thread.join(0.5)
     finally:
         watchdog.stop_event.set()
         browser.close()
         httpd.server_close()
-        app.store.close()
-        log.info("已退出")
+        app.stop_now("程序结束")  # 已经在窗口关闭时收尾过的话，这里什么也不做
         time.sleep(0.2)
 
 

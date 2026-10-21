@@ -48,8 +48,11 @@ class App:
         self.on_shutdown = []
         self.browser = None       # lifecycle.BrowserWindow（run.py 设置）
         self.browser_mode = ""   # edge/chrome/default/none
+        self.native_window = False  # v0.4：True = 用 pywebview 原生窗口（窗口在本进程里）
         self._stopping = threading.Event()
         self._health_lock = threading.Lock()
+        self._final_lock = threading.Lock()
+        self._finalized = False
         self._register()
 
     # ------------------------------------------------------------ 关闭
@@ -72,6 +75,20 @@ class App:
                 self.httpd.shutdown()
 
         threading.Thread(target=later, daemon=True).start()
+
+    def stop_now(self, reason="用户退出"):
+        """同步退出：走完 shutdown() 的步骤后，当场停 HTTP 服务、关数据库再返回。
+        给原生窗口用：macOS 上 ⌘Q / 程序坞「退出」时，系统在窗口的 closing 事件返回后就直接结束进程，
+        不会再回到 run.py 的收尾代码，所以收尾必须在这里同步做完。可以重复调用。"""
+        with self._final_lock:
+            if self._finalized:
+                return
+            self._finalized = True
+        self.shutdown(reason)
+        if self.httpd:
+            self.httpd.shutdown()  # 等 serve_forever 的循环退出（最多约 0.5 秒）
+        self.store.close()
+        log.info("已退出（%s）：采集已停、服务已停、数据库已关闭", reason)
 
     @property
     def stopping(self):
@@ -98,7 +115,7 @@ class App:
             return {
                 "app": APP_NAME, "version": __version__, "settings": self.store.settings(),
                 "source_types": sources.catalog(), "kinds": KINDS, "markets": MARKETS,
-                "category_names": rsshub.CATEGORY_NAMES,
+                "category_names": rsshub.CATEGORY_NAMES, "native_window": self.native_window,
                 "data_dir": str(paths.data_dir()), "db": self.store.path,
             }
 
@@ -315,6 +332,14 @@ class App:
                     self.store.kv_set("catalog_health", json.dumps(h, ensure_ascii=False))
             return {"ok": True}
 
+        @r("POST", "/api/notify/test")
+        def notify_test(req):
+            """原生窗口模式：发一条测试系统通知（macOS 第一次会请求通知权限）。"""
+            if not self.collector.notifier:
+                return {"ok": False, "error": "当前不是原生窗口模式，请在浏览器里允许通知"}
+            self.collector.notifier("舆情监控", "这是一条测试通知：预警会这样提醒你")
+            return {"ok": True}
+
         @r("POST", "/api/refresh")
         def refresh(req):
             self.collector.run_now()
@@ -383,7 +408,7 @@ class App:
 
         @r("GET", "/api/processes")
         def processes(req):
-            return procinfo.snapshot(self.browser, self.browser_mode)
+            return procinfo.snapshot(self.browser, self.browser_mode, self.native_window)
 
         @r("POST", "/api/shutdown")
         def shutdown(req):

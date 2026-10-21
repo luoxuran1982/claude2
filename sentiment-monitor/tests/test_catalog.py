@@ -309,3 +309,47 @@ class CatalogApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DesktopTest(unittest.TestCase):
+    """v0.4：原生窗口相关（不真正开窗口）。"""
+
+    def test_notify_passes_text_as_arguments(self):
+        from monitor import desktop
+
+        with mock.patch.object(desktop.sys, "platform", "darwin"), mock.patch.object(desktop.subprocess, "Popen") as p:
+            desktop.notify("标题", '含"引号"的内容')
+        args = p.call_args.args[0]
+        self.assertEqual(args[0], "osascript")
+        self.assertEqual(args[-2:], ["标题", '含"引号"的内容'])  # 文字作为参数传，不拼进脚本
+
+    def test_procinfo_native_single_process(self):
+        from monitor import procinfo
+
+        snap = procinfo.snapshot(None, "", native=True)
+        self.assertEqual(len(snap["processes"]), 1)
+        self.assertIn("原生窗口", snap["processes"][0]["role"])
+        self.assertIn("WebKit", snap["notes"][0])
+
+    def test_stop_now_closes_once(self):
+        app = App(Path(tempfile.mkdtemp()) / "t.db")
+        app.make_server(0)
+        t = threading.Thread(target=app.httpd.serve_forever, daemon=True)
+        t.start()
+        app.stop_now("测试")
+        t.join(3)
+        self.assertFalse(t.is_alive())  # 服务已停
+        with self.assertRaises(Exception):
+            app.store.settings()  # 数据库已关
+        app.stop_now("再次调用")  # 重复调用不报错
+
+    def test_alert_triggers_notifier(self):
+        app = App(Path(tempfile.mkdtemp()) / "t.db")
+        try:
+            calls = []
+            app.collector.notifier = lambda t, m: calls.append((t, m))
+            app.collector._alert(None, None, "risk", "danger", "【贵州茅台】风险信号")
+            self.assertEqual(calls, [("舆情预警 · 风险", "【贵州茅台】风险信号")])
+        finally:
+            app.collector.stop()
+            app.store.close()

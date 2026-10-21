@@ -10,6 +10,7 @@
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,7 +44,14 @@ for rel in src_files:
     data += ["--add-data", f"{rel}{os.pathsep}" + (f"source/{parent}" if parent != "." else "source")]
 print("打包源码文件：", len(src_files))
 
-hidden = ["monitor.server", "monitor.demo", "monitor.guide", "monitor.procinfo"]
+hidden = ["monitor.server", "monitor.demo", "monitor.guide", "monitor.procinfo", "monitor.desktop"]
+collect = []
+try:
+    import webview  # noqa: F401  v0.4：原生窗口
+
+    collect = ["--collect-all", "webview"]
+except ImportError:
+    print("提示：未安装 pywebview，打出的包会改用 Edge/Chrome 窗口")
 try:
     import psutil  # noqa: F401
 
@@ -60,7 +68,22 @@ PyInstaller.__main__.run([
     "--windowed",  # 无控制台：像普通桌面程序一样
     *data,
     *[x for h in hidden for x in ("--hidden-import", h)],
+    *collect,
 ])
+
+if sys.platform == "darwin":
+    # 程序坞、菜单栏、⌘Q 菜单里显示的名字和版本（PyInstaller 默认用英文程序名、版本 0.0.0）
+    import plistlib
+
+    from monitor import __version__
+
+    plist = ROOT / "dist" / f"{NAME}.app" / "Contents" / "Info.plist"
+    if plist.exists():
+        info = plistlib.loads(plist.read_bytes())
+        info.update(CFBundleName="舆情监控", CFBundleDisplayName="舆情监控", CFBundleShortVersionString=__version__,
+                    CFBundleVersion=__version__, CFBundleIdentifier="com.claude.sentiment-monitor")
+        plist.write_bytes(plistlib.dumps(info))
+        subprocess.run(["codesign", "--force", "--deep", "-s", "-", str(plist.parents[1])], check=False)
 
 dist = ROOT / "dist" / NAME
 if sys.platform == "darwin" and not dist.exists():
