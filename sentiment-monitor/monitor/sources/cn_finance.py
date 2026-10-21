@@ -79,10 +79,12 @@ class ClsTelegraphSource(Source):
     params_spec = [{"key": "rn", "label": "每次条数", "default": "50"}]
 
     def fetch(self, params, entities):
-        q = {"app": "CailianpressWeb", "os": "web", "rn": str(params.get("rn") or "50"), "sv": "8.4.6"}
+        # 2026-10 财联社改版：旧地址 /nodeapi/telegraphList 返回 404，改用 /api/cache?name=telegraph。
+        # 签名规则没变：参数按名字排序拼成 a=1&b=2，先 SHA1 再 MD5。rn 新接口不认，固定返回最新一批。
+        q = {"appName": "CailianpressWeb", "name": "telegraph", "os": "web", "sv": "8.7.9"}
         qs = urllib.parse.urlencode(sorted(q.items()))
         sign = hashlib.md5(hashlib.sha1(qs.encode()).hexdigest().encode()).hexdigest()
-        url = f"https://www.cls.cn/nodeapi/telegraphList?{qs}&sign={sign}"
+        url = f"https://www.cls.cn/api/cache?{qs}&sign={sign}"
         data = netutil.fetch_json(url, {"Referer": "https://www.cls.cn/telegraph"})
         rows = ((data.get("data") or {}).get("roll_data")) or []
         out = []

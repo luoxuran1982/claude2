@@ -30,7 +30,13 @@ def parse_feed(text: str) -> list[dict]:
     # 去掉 XML 声明里的 encoding，避免 ET 对已解码字符串报错；去掉非法控制字符
     text = re.sub(r"^<\?xml[^>]*\?>", "", text)
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-    root = ET.fromstring(text)
+    if re.match(r"\s*(<!doctype html|<html)", text, re.I):
+        # 常见于对方停止提供 RSS、跳转到首页或登录页（例如 2026-10 起必应新闻 RSS 跳转到首页）
+        raise ValueError("对方返回的是网页而不是 RSS：订阅地址可能已失效，或需要登录")
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        raise ValueError(f"RSS 格式解析失败：{e}") from e
     out = []
     for el in root.iter():
         if _local(el.tag) not in ("item", "entry"):
