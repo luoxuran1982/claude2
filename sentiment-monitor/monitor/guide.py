@@ -18,7 +18,7 @@ DOC_ASSET_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".pdf", ".csv
 # 本应用的全部手写源码（不含第三方库、生成文件和运行数据）
 SOURCE_PATTERNS = [
     "run.py", "requirements.txt", "start-mac-linux.sh", "start-windows.bat", "start-windows-debug.bat",
-    "monitor/*.py", "monitor/sources/*.py",
+    "monitor/*.py", "monitor/catalog_tested.json", "monitor/sources/*.py",
     "monitor/web/*.html", "monitor/web/*.js", "monitor/web/*.css",
     "packaging/*.py", "packaging/*.iss", "packaging/*.sh",
     "tests/*.py",
@@ -45,6 +45,10 @@ SOURCE_ROLES = {
     "monitor/sources/base.py": "数据源基类、时间解析",
     "monitor/sources/cn_finance.py": "国内财经快讯和搜索数据源",
     "monitor/sources/rss.py": "RSS/Atom、Google 新闻、Bing、Yahoo 数据源",
+    "monitor/sources/hub.py": "v0.3：RSSHub 路由、newsnow 热榜、巨潮资讯公告、港交所披露易公告",
+    "monitor/rsshub.py": "v0.3：本机 RSSHub 的地址、运行状态、一键启动、读取全部路由目录",
+    "monitor/catalog.py": "v0.3：订阅目录（RSSHub 全部路由 + 直连源清单）、分类、搜索",
+    "monitor/catalog_tested.json": "v0.3：开发时在用户 Mac 上批量实测的结果（订阅地址 → 条数、日期）",
     "monitor/web/index.html": "页面骨架：侧栏导航、顶部栏、缩放控件",
     "monitor/web/app.js": "前端全部逻辑：路由、各页面、图表、缩放、使用指南、运行状态",
     "monitor/web/markdown.js": "随应用打包的小型 Markdown 渲染器（不依赖 CDN）",
@@ -53,6 +57,7 @@ SOURCE_ROLES = {
     "packaging/smoke.py": "打包产物冒烟测试：接口、文档、源码在包内，退出后端口释放",
     "packaging/SentimentMonitor.iss": "Windows 安装程序（Inno Setup）脚本",
     "tests/test_monitor.py": "离线单元测试和端到端退出测试",
+    "tests/test_catalog.py": "v0.3：订阅目录、新数据源、失败退避、只存命中、旧库升级的离线测试",
 }
 
 

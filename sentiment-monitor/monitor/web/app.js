@@ -693,7 +693,7 @@ function testResultHTML(r) {
 // ------------------------------------------------------------------ 页面：订阅目录（v0.3）
 // 目录 = 本机 RSSHub 的全部路由（运行时读取）+ 本应用直连的源。分类沿用 RSSHub 自己的分类。
 const NEEDS = { config: "需 Cookie/配置", browser: "需内置浏览器", anti: "有反爬" };
-const cat$ = { cat: "finance", q: "", lang: "", ready: false, direct: false, items: [], total: 0, offset: 0, selected: new Set() };
+const cat$ = { cat: "finance", q: "", lang: "", ready: false, direct: false, tested: false, items: [], total: 0, offset: 0, selected: new Set() };
 PAGES.catalog = async (q) => {
   if (q.cat !== undefined) cat$.cat = q.cat;
   $("#view").innerHTML = `
@@ -702,6 +702,7 @@ PAGES.catalog = async (q) => {
       <input type="search" id="cQ" class="grow" placeholder="搜索网站或栏目，例如 财联社、雪球、港交所、SEC" value="${esc(cat$.q)}">
       <select id="cLang"><option value="">全部语言</option><option value="zh">中文</option><option value="other">外文</option></select>
       <label class="chk"><input type="checkbox" id="cReady" ${cat$.ready ? "checked" : ""}> 只看免配置</label>
+      <label class="chk"><input type="checkbox" id="cTested" ${cat$.tested ? "checked" : ""}> 只看实测可用</label>
       <label class="chk"><input type="checkbox" id="cDirect" ${cat$.direct ? "checked" : ""}> 只看直连</label>
     </div>
     <div class="catalog">
@@ -719,6 +720,7 @@ PAGES.catalog = async (q) => {
   $("#cLang").onchange = () => { cat$.lang = $("#cLang").value; loadCatalog(true); };
   $("#cReady").onchange = () => { cat$.ready = $("#cReady").checked; loadCatalog(true); };
   $("#cDirect").onchange = () => { cat$.direct = $("#cDirect").checked; loadCatalog(true); };
+  $("#cTested").onchange = () => { cat$.tested = $("#cTested").checked; loadCatalog(true); };
   $("#cMore").onclick = () => loadCatalog(false);
   $("#cSubSel").onclick = () => subscribeItems(cat$.items.filter((it) => cat$.selected.has(it.key)));
   $("#cTestPage").onclick = testCatalogPage;
@@ -760,7 +762,7 @@ async function loadCategories(reload) {
 }
 async function loadCatalog(reset) {
   if (reset) { cat$.items = []; cat$.offset = 0; cat$.selected.clear(); }
-  const d = await GET("/api/catalog" + qstr({ cat: cat$.cat, q: cat$.q, lang: cat$.lang, ready: cat$.ready ? 1 : "", direct: cat$.direct ? 1 : "", offset: cat$.offset, limit: 100 }));
+  const d = await GET("/api/catalog" + qstr({ cat: cat$.cat, q: cat$.q, lang: cat$.lang, ready: cat$.ready ? 1 : "", direct: cat$.direct ? 1 : "", tested: cat$.tested ? 1 : "", offset: cat$.offset, limit: 100 }));
   cat$.items = cat$.items.concat(d.items);
   cat$.total = d.total;
   cat$.offset += d.items.length;
@@ -770,7 +772,12 @@ function catalogBadges(it) {
   const b = [];
   if (it.direct) b.push(`<span class="tag ent">直连</span>`);
   if (it.health) b.push(it.health.ok ? `<span class="tag pos">本机测试 ${it.health.n} 条</span>` : `<span class="tag neg" title="${esc(it.health.error)}">本机测试失败</span>`);
-  else if (it.tested) b.push(`<span class="tag pos" title="开发时在用户 Mac 上实测">实测 ${it.tested.n} 条 · ${esc(it.tested.at)}</span>`);
+  else if (it.tested) {
+    b.push(`<span class="tag pos" title="开发时在用户 Mac 上实测（${esc(it.tested.at)}）">实测 ${it.tested.n} 条</span>`);
+    // 能打开但最新一条在半年前：网站多半已停更
+    const stale = it.tested.latest && Date.now() - Date.parse(it.tested.latest) > 180 * 86400e3;
+    if (stale) b.push(`<span class="tag off">内容停更：最新 ${esc(it.tested.latest)}</span>`);
+  }
   it.needs.forEach((n) => b.push(`<span class="tag ${n === "anti" ? "off" : "risk"}">${NEEDS[n] || n}</span>`));
   if (it.required.length) b.push(`<span class="tag neu">需填参数：${esc(it.required.join("、"))}</span>`);
   if (it.lang && !String(it.lang).startsWith("zh")) b.push(`<span class="tag off">${esc(it.lang)}</span>`);
@@ -1136,6 +1143,7 @@ const SETTINGS_SPEC = [
     ["rsshub_autostart", "bool", "自动启动 RSSHub", "有启用的 RSSHub 源而 RSSHub 没运行时，自动启动它（最多每 10 分钟试一次）。"],
     ["rsshub_start_cmd", "text", "RSSHub 启动命令", "留空 = 自动使用本机的 ~/Projects/第三方开源/启动.sh。别的电脑上可填自己的命令，例如 cd ~/RSSHub && pnpm start。"],
     ["newsnow_url", "text", "热榜接口地址", "newsnow 公开实例，默认 https://newsnow.busiyi.world；可改成自建的 newsnow。"],
+    ["sec_contact", "text", "SEC 联系邮箱", "订阅 SEC EDGAR（8-K、10-Q 等实时申报）时必填：SEC 要求程序访问带上联系邮箱，否则拒绝（403）。只发送给 sec.gov。"],
   ]],
   ["情感分析", [
     ["pos_threshold", "number", "利好阈值", "得分 ≥ 该值判为利好（-1 ~ 1，默认 0.15）。", null, 0.05],

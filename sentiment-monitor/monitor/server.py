@@ -248,7 +248,7 @@ class App:
             items, err = catalog.all_items()
             total, page = catalog.search(
                 items, cat=req.qs("cat"), q=req.qs("q"), lang=req.qs("lang"), only_ready=req.qs("ready") == "1",
-                direct_only=req.qs("direct") == "1", limit=min(500, req.qi("limit", 200)), offset=req.qi("offset", 0))
+                direct_only=req.qs("direct") == "1", only_tested=req.qs("tested") == "1", limit=min(500, req.qi("limit", 200)), offset=req.qi("offset", 0))
             subscribed = {}
             for s in self.store.sources():
                 subscribed[s["catalog_key"] or catalog.feed_key(s["type"], s["params"])] = s["id"]

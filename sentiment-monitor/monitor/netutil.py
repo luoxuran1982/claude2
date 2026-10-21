@@ -6,6 +6,7 @@ import gzip
 import json
 import re
 import socket
+import time
 import ssl
 import urllib.error
 import urllib.parse
@@ -18,7 +19,8 @@ DEFAULT_UA = (
 )
 
 # 由设置页修改：{"proxy": "http://127.0.0.1:7890", "timeout": 15, ...}
-options = {"proxy": "", "timeout": 15, "rsshub_url": "http://127.0.0.1:1200", "newsnow_url": "https://newsnow.busiyi.world"}
+options = {"proxy": "", "timeout": 15, "rsshub_url": "http://127.0.0.1:1200", "newsnow_url": "https://newsnow.busiyi.world",
+           "sec_contact": ""}
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -56,9 +58,33 @@ def _decode(raw: bytes, content_type: str) -> str:
     return raw.decode("utf-8", "replace")
 
 
+def _sec_headers(url: str) -> dict:
+    """SEC 要求程序访问时在 User-Agent 里写明「程序名 + 联系邮箱」，否则 EDGAR 返回 403。
+    邮箱由用户在设置里填写；没填时直接报错说明，不用假邮箱冒充。"""
+    host = urllib.parse.urlparse(url).hostname or ""
+    if not (host == "sec.gov" or host.endswith(".sec.gov")):
+        return {}
+    contact = (options.get("sec_contact") or "").strip()
+    if not contact and "/cgi-bin/" in url:
+        raise FetchError("SEC EDGAR 要求请求里带联系邮箱：请到「设置 → SEC 联系邮箱」填写")
+    return {"User-Agent": f"SentimentMonitor/1.0 {contact}".strip()} if contact else {}
+
+
 def fetch(url: str, headers: dict | None = None, timeout: float | None = None, data: bytes | None = None) -> str:
-    """GET（或给了 data 时 POST）一个网址，返回解码后的文本。失败统一抛 FetchError。"""
+    """GET（或给了 data 时 POST）一个网址，返回解码后的文本。失败统一抛 FetchError。
+    TLS 握手被对方中途断开（SSL EOF，多见于同时连同一网站太多）时自动重试一次。"""
+    try:
+        return _fetch(url, headers, timeout, data)
+    except FetchError as e:
+        if "EOF" not in str(e) and "Connection reset" not in str(e):
+            raise
+        time.sleep(1.5)
+        return _fetch(url, headers, timeout, data)
+
+
+def _fetch(url: str, headers: dict | None, timeout: float | None, data: bytes | None) -> str:
     h = {"User-Agent": DEFAULT_UA, "Accept": "*/*", "Accept-Encoding": "gzip, deflate", "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
+    h.update(_sec_headers(url))
     h.update(headers or {})
     req = urllib.request.Request(url, headers=h, data=data)
     try:

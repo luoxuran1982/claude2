@@ -41,7 +41,7 @@ class Collector:
 
     def apply_settings(self):
         cfg = self.store.settings()
-        for k in ("proxy", "timeout", "rsshub_url", "rsshub_start_cmd", "newsnow_url"):
+        for k in ("proxy", "timeout", "rsshub_url", "rsshub_start_cmd", "newsnow_url", "sec_contact"):
             netutil.options[k] = cfg[k]
 
     def run_now(self, source_id=None):

@@ -31,6 +31,7 @@ from monitor.guide import SOURCE_PATTERNS  # noqa: E402
 # 「使用指南」：README.md 和 docs/ 全部打进包里（guide/），离线可读
 data = [
     "--add-data", f"monitor/web{os.pathsep}monitor/web",
+    "--add-data", f"monitor/catalog_tested.json{os.pathsep}monitor",  # v0.3：订阅目录的实测记录
     "--add-data", f"README.md{os.pathsep}guide",
     "--add-data", f"docs{os.pathsep}guide/docs",
 ]

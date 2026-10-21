@@ -33,7 +33,7 @@ def _hot(cat, site, pid, interval=15, only_matched=True):
               note="来自 newsnow 公开实例（非官方接口）。热榜条目多数没有发布时间，按抓到的时间记录。")
 
 
-SEC_NOTE = "美国证监会 EDGAR 实时申报流（全市场），默认只保存命中监控对象的条目。"
+SEC_NOTE = "美国证监会 EDGAR 实时申报流（全市场），默认只保存命中监控对象的条目。需先在「设置 → SEC 联系邮箱」填写邮箱（SEC 要求）。"
 EDGAR = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={}&count=40&output=atom"
 
 # 本应用直连的源（2026-10-21 在用户 Mac 上实测能抓到）
@@ -182,9 +182,10 @@ def categories(items: list[dict]) -> list[dict]:
     return [{"id": c, "name": rsshub.CATEGORY_NAMES.get(c, c), "count": count[c]} for c in cats]
 
 
-def search(items, cat="", q="", lang="", only_ready=False, direct_only=False, limit=300, offset=0):
+def search(items, cat="", q="", lang="", only_ready=False, direct_only=False, only_tested=False, limit=300, offset=0):
     """按分类 / 关键词 / 语言筛选目录。返回 (总数, 本页条目)。"""
     q = (q or "").strip().lower()
+    tst = tested()
     out = []
     for it in items:
         if cat and cat not in it["categories"]:
@@ -199,9 +200,12 @@ def search(items, cat="", q="", lang="", only_ready=False, direct_only=False, li
             continue
         if q and q not in f"{it['site']} {it['name']} {it.get('key', '')} {it.get('site_url', '')}".lower():
             continue
+        if only_tested:
+            feed = default_feed(it)
+            if not feed or feed_key(feed["type"], feed["params"]) not in tst:
+                continue
         out.append(it)
     # 中文在前；同语言里直连、实测过的在前，其余按网站名
-    tst = tested()
 
     def rank(it):
         feed = default_feed(it)

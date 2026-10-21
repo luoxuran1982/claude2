@@ -107,6 +107,7 @@ DEFAULT_SETTINGS = {
     "rsshub_start_cmd": "",                  # v0.3：自定义启动命令；空 = 自动找本机启动脚本
     "newsnow_url": "https://newsnow.busiyi.world",  # v0.3：热榜接口地址（可改成自建 newsnow）
     "max_parallel": 6,                       # v0.3：同时抓取的数据源个数
+    "sec_contact": "",                       # v0.3：SEC EDGAR 要求的联系邮箱（只发给 sec.gov）
 }
 
 DEFAULT_SOURCES = [
