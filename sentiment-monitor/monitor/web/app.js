@@ -7,7 +7,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LABEL = { pos: "利好", neg: "利空", neu: "中性" };
 const ARROW = { pos: "▲", neg: "▼", neu: "●" };
-const TITLES = { overview: "总览", feed: "资讯流", entities: "监控对象", sources: "数据源", alerts: "预警中心", status: "运行状态", guide: "使用指南", settings: "设置" };
+const TITLES = { overview: "总览", feed: "资讯流", entities: "监控对象", sources: "数据源", catalog: "订阅目录", alerts: "预警中心", status: "运行状态", guide: "使用指南", settings: "设置" };
 const TZ = -new Date().getTimezoneOffset();
 
 const state = {
@@ -514,11 +514,40 @@ function entityForm(e) {
   $("#eName").focus();
 }
 
-// ------------------------------------------------------------------ 页面：数据源
+// ------------------------------------------------------------------ 页面：数据源（v0.3 按分类折叠分组）
+const catName = (id) => (state.boot.category_names || {})[id] || id || "未分类";
+const srcFilter = { q: "", only: "" };
+function loadCollapsed() {
+  try { return JSON.parse(localStorage.getItem("monitor.srcCollapsed") || "{}"); } catch (e) { return {}; }
+}
+function saveCollapsed(v) {
+  try { localStorage.setItem("monitor.srcCollapsed", JSON.stringify(v)); } catch (e) { /* 无痕模式等：不记忆 */ }
+}
+const isFailed = (s) => !!(s.last_error && s.last_ok < s.last_run);
 PAGES.sources = async () => {
   $("#view").innerHTML = `
-    <div class="toolbar"><div class="muted">快讯类数据源抓取全部资讯后自动匹配监控对象；“按监控对象”的搜索类数据源会用每个对象的名称分别查询。</div><span class="spacer"></span><button class="btn primary" id="btnAddSrc">添加数据源</button></div>
-    <div class="card"><div class="table-wrap" id="srcTable"></div></div>`;
+    <div class="toolbar">
+      <input type="search" id="srcQ" class="grow" placeholder="搜索已添加的数据源" value="${esc(srcFilter.q)}">
+      <select id="srcOnly"><option value="">全部</option><option value="enabled">只看启用</option><option value="failed">只看失败</option></select>
+      <button class="btn" id="btnFold">全部折叠</button><button class="btn" id="btnUnfold">全部展开</button>
+      <button class="btn" id="btnRunAll">全部立即抓取</button>
+      <a class="btn" href="#/catalog">从订阅目录添加</a>
+      <button class="btn primary" id="btnAddSrc">手动添加</button>
+    </div>
+    <div class="muted" style="margin:-4px 0 12px;font-size:13px">快讯类数据源抓取全部资讯后自动匹配监控对象；“按监控对象”的搜索类数据源会用每个对象的名称分别查询；标「只存命中」的源只保存命中监控对象的资讯。连续失败的源会自动拉长间隔（最多 8 倍），成功一次就恢复。</div>
+    <div id="srcGroups"></div>`;
+  $("#srcOnly").value = srcFilter.only;
+  $("#srcQ").oninput = debounce(() => { srcFilter.q = $("#srcQ").value; renderSources(); }, 200);
+  $("#srcOnly").onchange = () => { srcFilter.only = $("#srcOnly").value; renderSources(); };
+  const foldAll = (fold) => {
+    const c = {};
+    if (fold) new Set(state.sources.map((s) => s.category || "")).forEach((k) => (c[k] = true));
+    saveCollapsed(c);
+    renderSources();
+  };
+  $("#btnFold").onclick = () => foldAll(true);
+  $("#btnUnfold").onclick = () => foldAll(false);
+  $("#btnRunAll").onclick = async () => { await POST("/api/refresh").catch(errToast); toast("已开始抓取全部启用的数据源"); };
   $("#btnAddSrc").onclick = () => sourceForm({ enabled: 1, interval_min: 10, params: {} });
   await loadSources();
 };
@@ -527,22 +556,68 @@ async function loadSources() {
   renderSources();
 }
 const loadSourcesSoon = debounce(() => state.page === "sources" && loadSources(), 400);
+function sourceStatus(s) {
+  if (s.running) return `<span class="status-dot run"></span>抓取中…`;
+  if (!s.last_run) return `<span class="status-dot"></span><span class="muted">等待首次抓取</span>`;
+  if (isFailed(s)) {
+    const backoff = s.fail_count > 0 ? `<span class="muted">（连续失败 ${s.fail_count} 次，间隔已放大 ${Math.min(8, 2 ** Math.min(3, s.fail_count))} 倍）</span>` : "";
+    return `<span class="status-dot err"></span>${ago(s.last_run)} 失败${backoff}<div class="err-text">${esc(s.last_error)}</div>`;
+  }
+  return `<span class="status-dot ok"></span>${ago(s.last_run)} · 获取 ${s.last_count} 条，新增 ${s.last_new} 条${s.last_error ? `<div class="err-text">${esc(s.last_error)}</div>` : ""}`;
+}
+function sourceRow(s, types) {
+  const t = types[s.type] || { label: s.type };
+  const params = { ...(s.params || {}) };
+  const onlyMatched = params.only_matched === "1";
+  delete params.only_matched;
+  const p = Object.entries(params).map(([k, v]) => `${k}=${v}`).join(" ");
+  return `<tr><td><label class="switch"><input type="checkbox" data-toggle="${s.id}" ${s.enabled ? "checked" : ""}><span></span></label></td>
+    <td><b>${esc(s.name)}</b>${onlyMatched ? ` <span class="tag off">只存命中</span>` : ""}<div class="muted src-param">${esc(t.label)}${t.per_entity ? " · 按监控对象" : ""}${p ? " · " + esc(p) : ""}</div></td>
+    <td class="r num" style="white-space:nowrap">${s.interval_min} 分钟</td><td>${sourceStatus(s)}</td><td class="r num">${s.total}</td>
+    <td class="r" style="white-space:nowrap"><button class="btn small" data-run="${s.id}" ${s.running ? "disabled" : ""}>抓取</button> <button class="btn small" data-edit="${s.id}">编辑</button> <button class="btn small danger-ghost" data-del="${s.id}">删除</button></td></tr>`;
+}
 function renderSources() {
-  const el = $("#srcTable");
+  const el = $("#srcGroups");
   if (!el) return;
   const types = Object.fromEntries(state.boot.source_types.map((t) => [t.type, t]));
-  el.innerHTML = `<table><thead><tr><th>启用</th><th>名称</th><th class="r">间隔</th><th>状态</th><th class="r">累计入库</th><th></th></tr></thead><tbody>
-    ${state.sources.map((s) => {
-      const t = types[s.type] || { label: s.type };
-      const st = s.running ? `<span class="status-dot run"></span>抓取中…` : !s.last_run ? `<span class="status-dot"></span><span class="muted">等待首次抓取</span>`
-        : s.last_error && s.last_ok < s.last_run ? `<span class="status-dot err"></span>${ago(s.last_run)} 失败<div class="err-text">${esc(s.last_error)}</div>`
-          : `<span class="status-dot ok"></span>${ago(s.last_run)} · 获取 ${s.last_count} 条，新增 ${s.last_new} 条${s.last_error ? `<div class="err-text">${esc(s.last_error)}</div>` : ""}`;
-      const p = Object.entries(s.params || {}).map(([k, v]) => `${k}=${v}`).join(" ");
-      return `<tr><td><label class="switch"><input type="checkbox" data-toggle="${s.id}" ${s.enabled ? "checked" : ""}><span></span></label></td>
-        <td><b>${esc(s.name)}</b><div class="muted" style="font-size:12px">${esc(t.label)}${t.per_entity ? " · 按监控对象" : ""}${p ? " · " + esc(p) : ""}</div></td>
-        <td class="r num" style="white-space:nowrap">${s.interval_min} 分钟</td><td>${st}</td><td class="r num">${s.total}</td>
-        <td class="r" style="white-space:nowrap"><button class="btn small" data-run="${s.id}" ${s.running ? "disabled" : ""}>抓取</button> <button class="btn small" data-edit="${s.id}">编辑</button> <button class="btn small danger-ghost" data-del="${s.id}">删除</button></td></tr>`;
-    }).join("")}</tbody></table>`;
+  const q = srcFilter.q.trim().toLowerCase();
+  const list = state.sources.filter((s) => {
+    if (srcFilter.only === "enabled" && !s.enabled) return false;
+    if (srcFilter.only === "failed" && !isFailed(s)) return false;
+    return !q || `${s.name} ${JSON.stringify(s.params)}`.toLowerCase().includes(q);
+  });
+  const groups = {};
+  list.forEach((s) => (groups[s.category || ""] ||= []).push(s));
+  const order = Object.keys(state.boot.category_names || {});
+  const keys = Object.keys(groups).sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999));
+  const collapsed = loadCollapsed();
+  const filtering = q || srcFilter.only;
+  el.innerHTML = keys.length ? keys.map((k) => {
+    const rows = groups[k];
+    const on = rows.filter((s) => s.enabled).length, bad = rows.filter(isFailed).length;
+    const open = filtering || !collapsed[k];
+    return `<div class="card src-group">
+      <div class="src-group-head" data-fold="${esc(k)}"><span class="fold">${open ? "▾" : "▸"}</span><b>${esc(catName(k))}</b>
+        <span class="muted">共 ${rows.length} 个 · 启用 ${on}</span>${bad ? `<span class="tag risk">失败 ${bad}</span>` : ""}
+        <span class="spacer"></span>
+        <button class="btn small" data-group-on="${esc(k)}">整组启用</button><button class="btn small" data-group-off="${esc(k)}">整组停用</button></div>
+      ${open ? `<div class="table-wrap"><table><thead><tr><th>启用</th><th>名称</th><th class="r">间隔</th><th>状态</th><th class="r">累计入库</th><th></th></tr></thead>
+        <tbody>${rows.map((s) => sourceRow(s, types)).join("")}</tbody></table></div>` : ""}
+    </div>`;
+  }).join("") : `<div class="card empty">${state.sources.length ? "没有符合筛选条件的数据源" : "还没有数据源，到「订阅目录」里挑选"}</div>`;
+  $$("[data-fold]", el).forEach((h) => (h.onclick = (ev) => {
+    if (ev.target.closest("button")) return;
+    const c = loadCollapsed();
+    c[h.dataset.fold] = !c[h.dataset.fold];
+    saveCollapsed(c);
+    renderSources();
+  }));
+  const setGroup = async (k, enabled) => {
+    for (const s of groups[k] || []) if (!!s.enabled !== enabled) await POST("/api/sources", { ...s, enabled }).catch(errToast);
+    loadSources();
+  };
+  $$("[data-group-on]", el).forEach((b) => (b.onclick = () => setGroup(b.dataset.groupOn, true)));
+  $$("[data-group-off]", el).forEach((b) => (b.onclick = () => setGroup(b.dataset.groupOff, false)));
   $$("[data-run]", el).forEach((b) => (b.onclick = async () => { b.disabled = true; await POST(`/api/sources/${b.dataset.run}/run`).catch(errToast); }));
   $$("[data-edit]", el).forEach((b) => (b.onclick = () => sourceForm(state.sources.find((s) => s.id === +b.dataset.edit))));
   $$("[data-del]", el).forEach((b) => (b.onclick = async () => {
@@ -559,14 +634,17 @@ function renderSources() {
 }
 function sourceForm(s) {
   const types = state.boot.source_types;
+  const cats = Object.entries(state.boot.category_names || {});
   openModal(`<h2>${s.id ? "编辑" : "添加"}数据源</h2>
     <div class="form">
       <label class="k">类型</label><select id="sType">${types.map((t) => `<option value="${t.type}" ${t.type === s.type ? "selected" : ""}>${esc(t.label)}${t.per_entity ? "（按监控对象）" : ""}</option>`).join("")}</select>
       <div class="hint" id="sDesc"></div>
       <label class="k">名称 *</label><input type="text" id="sName" value="${esc(s.name || "")}">
+      <label class="k">分类</label><select id="sCat"><option value="">未分类</option>${cats.map(([id, n]) => `<option value="${id}" ${id === s.category ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
       <label class="k">抓取间隔（分钟）</label><input type="number" id="sInterval" min="1" step="1" value="${s.interval_min || 10}">
       <div class="hint">太频繁可能被网站限制访问，快讯类建议 3–5 分钟，搜索类 15–60 分钟。</div>
       <label class="k">启用</label><label class="switch"><input type="checkbox" id="sEnabled" ${s.enabled ? "checked" : ""}><span></span></label>
+      <label class="k">只存命中</label><label class="chk"><input type="checkbox" id="sOnly" ${(s.params || {}).only_matched === "1" ? "checked" : ""}> 只保存命中监控对象的资讯（量大的源建议勾选）</label>
       <div id="sParams" style="display:contents"></div>
     </div>
     <div id="sPreview"></div>
@@ -583,7 +661,9 @@ function sourceForm(s) {
   const collect = () => {
     const params = {};
     $$("[data-param]").forEach((i) => { if (i.value.trim()) params[i.dataset.param] = i.value.trim(); });
-    return { id: s.id, type: $("#sType").value, name: $("#sName").value, interval_min: +$("#sInterval").value, enabled: $("#sEnabled").checked, params };
+    if ($("#sOnly").checked) params.only_matched = "1";
+    return { id: s.id, type: $("#sType").value, name: $("#sName").value, interval_min: +$("#sInterval").value, enabled: $("#sEnabled").checked,
+      params, category: $("#sCat").value, catalog_key: s.catalog_key || "" };
   };
   $("#sType").onchange = renderParams;
   renderParams();
@@ -592,10 +672,7 @@ function sourceForm(s) {
     b.disabled = true; b.textContent = "测试中…";
     $("#sPreview").innerHTML = "";
     try {
-      const r = await POST("/api/sources/test", collect());
-      $("#sPreview").innerHTML = r.ok
-        ? `<div class="preview"><b>成功</b>，获取 ${r.count} 条，用时 ${r.ms} 毫秒${r.tested_with ? `（用「${esc(r.tested_with)}」测试）` : ""}<ul>${r.items.map((i) => `<li>${fmtTime(i.published_at)} ${esc(i.title)}</li>`).join("")}</ul></div>`
-        : `<div class="preview"><b class="down">失败</b>（${r.ms} 毫秒）：${esc(r.error)}<div class="muted" style="margin-top:6px">常见原因：网络不通或需要代理（设置 → 网络代理）、网站改版、访问过于频繁被限制。</div></div>`;
+      $("#sPreview").innerHTML = testResultHTML(await POST("/api/sources/test", collect()));
     } catch (e) { errToast(e); } finally { b.disabled = false; b.textContent = "测试"; }
   };
   $("#sSave").onclick = async () => {
@@ -604,6 +681,221 @@ function sourceForm(s) {
       closeModal();
       toast("已保存");
       loadSources();
+    } catch (e) { errToast(e); }
+  };
+}
+function testResultHTML(r) {
+  return r.ok
+    ? `<div class="preview"><b>成功</b>，获取 ${r.count} 条，用时 ${r.ms} 毫秒${r.tested_with ? `（用「${esc(r.tested_with)}」测试）` : ""}<ul>${r.items.map((i) => `<li>${fmtTime(i.published_at)} ${esc(i.title)}</li>`).join("")}</ul></div>`
+    : `<div class="preview"><b class="down">失败</b>（${r.ms} 毫秒）：${esc(r.error)}<div class="muted" style="margin-top:6px">常见原因：网络不通或需要代理（设置 → 网络代理）、RSSHub 没运行、网站改版、需要 Cookie 或访问过于频繁被限制。</div></div>`;
+}
+
+// ------------------------------------------------------------------ 页面：订阅目录（v0.3）
+// 目录 = 本机 RSSHub 的全部路由（运行时读取）+ 本应用直连的源。分类沿用 RSSHub 自己的分类。
+const NEEDS = { config: "需 Cookie/配置", browser: "需内置浏览器", anti: "有反爬" };
+const cat$ = { cat: "finance", q: "", lang: "", ready: false, direct: false, items: [], total: 0, offset: 0, selected: new Set() };
+PAGES.catalog = async (q) => {
+  if (q.cat !== undefined) cat$.cat = q.cat;
+  $("#view").innerHTML = `
+    <div class="toolbar">
+      <span id="hubStatus" class="hub-status"><span class="status-dot run"></span>检查 RSSHub…</span>
+      <input type="search" id="cQ" class="grow" placeholder="搜索网站或栏目，例如 财联社、雪球、港交所、SEC" value="${esc(cat$.q)}">
+      <select id="cLang"><option value="">全部语言</option><option value="zh">中文</option><option value="other">外文</option></select>
+      <label class="chk"><input type="checkbox" id="cReady" ${cat$.ready ? "checked" : ""}> 只看免配置</label>
+      <label class="chk"><input type="checkbox" id="cDirect" ${cat$.direct ? "checked" : ""}> 只看直连</label>
+    </div>
+    <div class="catalog">
+      <div class="card cat-side" id="catSide"><div class="empty">读取目录…</div></div>
+      <div class="cat-main">
+        <div class="toolbar cat-bar"><span id="cCount" class="muted"></span><span class="spacer"></span>
+          <button class="btn" id="cTestPage">测试本页</button>
+          <button class="btn primary" id="cSubSel" disabled>订阅所选</button></div>
+        <div id="catList"></div>
+        <div style="text-align:center;margin:12px 0"><button class="btn" id="cMore" hidden>加载更多</button></div>
+      </div>
+    </div>`;
+  $("#cLang").value = cat$.lang;
+  $("#cQ").oninput = debounce(() => { cat$.q = $("#cQ").value; loadCatalog(true); }, 250);
+  $("#cLang").onchange = () => { cat$.lang = $("#cLang").value; loadCatalog(true); };
+  $("#cReady").onchange = () => { cat$.ready = $("#cReady").checked; loadCatalog(true); };
+  $("#cDirect").onchange = () => { cat$.direct = $("#cDirect").checked; loadCatalog(true); };
+  $("#cMore").onclick = () => loadCatalog(false);
+  $("#cSubSel").onclick = () => subscribeItems(cat$.items.filter((it) => cat$.selected.has(it.key)));
+  $("#cTestPage").onclick = testCatalogPage;
+  hubStatus();
+  await loadCategories();
+  await loadCatalog(true);
+};
+async function hubStatus() {
+  const el = $("#hubStatus");
+  if (!el) return;
+  const s = await GET("/api/rsshub/status").catch(() => ({ ok: false, error: "无法检查" }));
+  el.innerHTML = s.ok ? `<span class="status-dot ok"></span>RSSHub 运行中 <span class="muted">${esc(s.url)}</span>`
+    : `<span class="status-dot err"></span>RSSHub ${s.starting ? "启动中…" : "未运行"} <span class="muted">${esc(s.url)}</span>${s.can_start && !s.starting ? ` <button class="btn small" id="hubStart">启动 RSSHub</button>` : ""}`;
+  const b = $("#hubStart");
+  if (b) b.onclick = async () => {
+    b.disabled = true;
+    const r = await POST("/api/rsshub/start").catch(errToast);
+    if (r && !r.ok) toast(esc(r.error), "error");
+    else toast("正在启动 RSSHub，大约需要 10–30 秒");
+    setTimeout(hubStatus, 3000);
+    setTimeout(async () => { await hubStatus(); await loadCategories(true); loadCatalog(true); }, 20000);
+  };
+  if (!s.ok && s.starting) setTimeout(hubStatus, 5000);
+}
+async function loadCategories(reload) {
+  const d = await GET("/api/catalog/categories" + (reload ? "?reload=1" : ""));
+  const side = $("#catSide");
+  if (!side) return;
+  side.innerHTML = `<div class="cat-sum">共 <b>${d.total}</b> 条<div class="muted">RSSHub ${d.rsshub} · 直连 ${d.direct}</div></div>
+    ${d.error ? `<div class="err-text" style="margin:6px 0">${esc(d.error)}</div>` : ""}
+    <a href="#" data-cat="" class="${cat$.cat === "" ? "active" : ""}">全部 <span>${d.total}</span></a>
+    ${d.categories.map((c) => `<a href="#" data-cat="${c.id}" class="${c.id === cat$.cat ? "active" : ""}">${esc(c.name)} <span>${c.count}</span></a>`).join("")}`;
+  $$("[data-cat]", side).forEach((a) => (a.onclick = (ev) => {
+    ev.preventDefault();
+    cat$.cat = a.dataset.cat;
+    $$("[data-cat]", side).forEach((x) => x.classList.toggle("active", x === a));
+    loadCatalog(true);
+  }));
+}
+async function loadCatalog(reset) {
+  if (reset) { cat$.items = []; cat$.offset = 0; cat$.selected.clear(); }
+  const d = await GET("/api/catalog" + qstr({ cat: cat$.cat, q: cat$.q, lang: cat$.lang, ready: cat$.ready ? 1 : "", direct: cat$.direct ? 1 : "", offset: cat$.offset, limit: 100 }));
+  cat$.items = cat$.items.concat(d.items);
+  cat$.total = d.total;
+  cat$.offset += d.items.length;
+  renderCatalog();
+}
+function catalogBadges(it) {
+  const b = [];
+  if (it.direct) b.push(`<span class="tag ent">直连</span>`);
+  if (it.health) b.push(it.health.ok ? `<span class="tag pos">本机测试 ${it.health.n} 条</span>` : `<span class="tag neg" title="${esc(it.health.error)}">本机测试失败</span>`);
+  else if (it.tested) b.push(`<span class="tag pos" title="开发时在用户 Mac 上实测">实测 ${it.tested.n} 条 · ${esc(it.tested.at)}</span>`);
+  it.needs.forEach((n) => b.push(`<span class="tag ${n === "anti" ? "off" : "risk"}">${NEEDS[n] || n}</span>`));
+  if (it.required.length) b.push(`<span class="tag neu">需填参数：${esc(it.required.join("、"))}</span>`);
+  if (it.lang && !String(it.lang).startsWith("zh")) b.push(`<span class="tag off">${esc(it.lang)}</span>`);
+  return b.join(" ");
+}
+function renderCatalog() {
+  const el = $("#catList");
+  if (!el) return;
+  $("#cCount").textContent = `「${cat$.cat ? catName(cat$.cat) : "全部"}」共 ${cat$.total} 条，已显示 ${cat$.items.length} 条`;
+  $("#cMore").hidden = cat$.items.length >= cat$.total;
+  el.innerHTML = cat$.items.length ? `<div class="card" style="padding:4px 0">${cat$.items.map((it, i) => `
+    <div class="cat-item">
+      <input type="checkbox" data-sel="${i}" ${it.subscribed || !it.feed ? "disabled" : ""} ${cat$.selected.has(it.key) ? "checked" : ""}>
+      <div class="cat-body">
+        <div><b>${esc(it.site)}</b> · ${esc(it.name)} ${catalogBadges(it)}</div>
+        <div class="muted src-param">${it.direct ? esc(it.feed_key) : `<code>${esc(it.path)}</code>`}${it.site_url ? ` · ${esc(it.site_url)}` : ""}</div>
+        ${it.desc ? `<div class="muted cat-desc">${esc(it.desc.replace(/:::[a-z ]*|\n/g, " ").slice(0, 160))}</div>` : ""}
+        <div class="cat-test" id="ct${i}"></div>
+      </div>
+      <div class="cat-act">
+        ${it.subscribed ? `<span class="tag pos">✓ 已订阅</span>` : it.feed
+          ? `<button class="btn small" data-test="${i}">测试</button> <button class="btn small primary" data-sub="${i}">订阅</button>`
+          : `<button class="btn small" data-fill="${i}">填参数订阅</button>`}
+      </div>
+    </div>`).join("")}</div>` : `<div class="card empty">没有符合条件的条目</div>`;
+  $$("[data-sel]", el).forEach((c) => (c.onchange = () => {
+    const it = cat$.items[+c.dataset.sel];
+    c.checked ? cat$.selected.add(it.key) : cat$.selected.delete(it.key);
+    $("#cSubSel").disabled = !cat$.selected.size;
+    $("#cSubSel").textContent = cat$.selected.size ? `订阅所选（${cat$.selected.size}）` : "订阅所选";
+  }));
+  $$("[data-test]", el).forEach((b) => (b.onclick = () => testCatalogItem(+b.dataset.test)));
+  $$("[data-sub]", el).forEach((b) => (b.onclick = () => subscribeItems([cat$.items[+b.dataset.sub]])));
+  $$("[data-fill]", el).forEach((b) => (b.onclick = () => catalogParamForm(cat$.items[+b.dataset.fill])));
+}
+// 目录条目 → 数据源：默认间隔（直连条目自带；RSSHub 金融类 10 分钟，其他 30 分钟），非金融类默认只存命中
+function itemToSource(it, feed) {
+  feed = feed || it.feed;
+  const cat = it.categories[0] || "";
+  return {
+    type: feed.type, params: feed.params, name: `${it.site}·${it.name}`, category: cat,
+    interval: it.interval || (cat === "finance" ? 10 : 30),
+    only_matched: it.direct ? it.only_matched : cat !== "finance",
+  };
+}
+async function subscribeItems(items) {
+  if (!items.length) return;
+  try {
+    const r = await POST("/api/catalog/subscribe", { items: items.map((it) => itemToSource(it)) });
+    toast(`已订阅 ${r.added} 个，正在首次抓取。到「数据源」页查看状态`);
+    state.sources = [];
+    loadCatalog(true);
+  } catch (e) { errToast(e); }
+}
+async function testCatalogItem(i, quiet) {
+  const it = cat$.items[i];
+  const box = $(`#ct${i}`);
+  if (!it || !it.feed || !box) return;
+  box.innerHTML = `<span class="muted">测试中…</span>`;
+  const r = await POST("/api/sources/test", { type: it.feed.type, params: it.feed.params }).catch((e) => ({ ok: false, error: e.message, ms: 0 }));
+  it.health = { ok: r.ok, n: r.count || 0, error: r.error || "" };
+  POST("/api/catalog/health", { feed_key: it.feed_key, ok: r.ok, count: r.count, error: r.error }).catch(() => {});
+  if (!$(`#ct${i}`)) return r;
+  box.innerHTML = quiet ? (r.ok ? `<span class="up">✓ ${r.count} 条</span>` : `<span class="down">✗ ${esc(r.error)}</span>`) : testResultHTML(r);
+  return r;
+}
+async function testCatalogPage() {
+  const b = $("#cTestPage");
+  b.disabled = true;
+  const idx = cat$.items.map((it, i) => i).filter((i) => cat$.items[i].feed && !cat$.items[i].subscribed);
+  let done = 0, ok = 0;
+  const worker = async () => {
+    while (idx.length) {
+      const r = await testCatalogItem(idx.shift(), true);
+      done++; if (r && r.ok) ok++;
+      if ($("#cTestPage")) b.textContent = `测试中 ${done}…`;
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  b.disabled = false; b.textContent = "测试本页";
+  toast(`本页测试完成：${ok} 个成功，${done - ok} 个失败`);
+}
+function catalogParamForm(it) {
+  const names = it.path.split("/").filter((s) => s.startsWith(":")).map((s) => s.slice(1).replace(/\{.*\}/, "").replace("?", ""));
+  openModal(`<h2>${esc(it.site)} · ${esc(it.name)}</h2>
+    <div class="muted" style="margin-bottom:8px">路由模板 <code>${esc(it.path)}</code>${it.example ? `，例子 <code>${esc(it.example)}</code>` : ""}</div>
+    <div class="form">${names.map((n) => `<label class="k">${esc(n)}${it.required.includes(n) ? " *" : ""}</label>
+      <input type="text" data-rp="${esc(n)}" placeholder="${esc(String(it.params[n] || "").slice(0, 80))}">
+      ${it.params[n] ? `<div class="hint">${esc(String(it.params[n]).slice(0, 300))}</div>` : ""}`).join("")}
+    </div>
+    ${it.desc ? `<div class="hint" style="white-space:pre-wrap;max-height:160px;overflow:auto">${esc(it.desc)}</div>` : ""}
+    <div id="rpPreview"></div>
+    <div class="actions"><button class="btn" id="rpExample" ${it.example ? "" : "disabled"}>用例子</button><button class="btn" id="rpTest">测试</button><span class="spacer"></span><button class="btn" data-close>取消</button><button class="btn primary" id="rpSave">订阅</button></div>`);
+  let path = "";
+  const build = () => {
+    const vals = Object.fromEntries($$("[data-rp]").map((i) => [i.dataset.rp, i.value.trim()]));
+    const segs = [];
+    for (const s of it.path.split("/").filter(Boolean)) {
+      if (!s.startsWith(":")) { segs.push(s); continue; }
+      const n = s.slice(1).replace(/\{.*\}/, "").replace("?", "");
+      if (vals[n]) segs.push(encodeURIComponent(vals[n]).replace(/%2F/g, "/"));
+      else if (it.required.includes(n)) throw new Error(`请填写 ${n}`);
+      else break; // 可选参数后面的都不能再填
+    }
+    return "/" + segs.join("/");
+  };
+  $("#rpExample").onclick = () => { path = it.example; $("#rpPreview").innerHTML = `<div class="muted">将订阅：<code>${esc(path)}</code></div>`; };
+  const current = () => path || build();
+  $("#rpTest").onclick = async () => {
+    try {
+      const p = current();
+      $("#rpPreview").innerHTML = `<span class="muted">测试 ${esc(p)} …</span>`;
+      $("#rpPreview").innerHTML = testResultHTML(await POST("/api/sources/test", { type: "rsshub", params: { path: p } }));
+    } catch (e) { errToast(e); }
+  };
+  $$("[data-rp]").forEach((i) => (i.oninput = () => (path = "")));
+  $("#rpSave").onclick = async () => {
+    try {
+      const p = current();
+      const src = itemToSource(it, { type: "rsshub", params: { path: p } });
+      src.name = `${it.site}·${it.name}（${p.split("/").slice(2).join("/")}）`;
+      const r = await POST("/api/catalog/subscribe", { items: [src] });
+      closeModal();
+      toast(r.added ? "已订阅" : "这个地址已经订阅过了");
+      loadCatalog(true);
     } catch (e) { errToast(e); }
   };
 }
@@ -800,6 +1092,13 @@ const SETTINGS_SPEC = [
   ["网络", [
     ["proxy", "text", "网络代理", "例：http://127.0.0.1:7890。访问 Google 新闻、Yahoo 等海外源时需要；留空则使用系统代理。"],
     ["timeout", "number", "请求超时（秒）", ""],
+    ["max_parallel", "number", "同时抓取的数据源个数", "订阅的源多时，定时抓取每轮最多同时开始这么多个（默认 6）。"],
+  ]],
+  ["订阅目录（RSSHub / 热榜）", [
+    ["rsshub_url", "text", "RSSHub 地址", "本机 RSSHub 默认 http://127.0.0.1:1200。RSSHub 是独立程序，本应用退出时不会停止它。不建议用公共的 rsshub.app（常被限流）。"],
+    ["rsshub_autostart", "bool", "自动启动 RSSHub", "有启用的 RSSHub 源而 RSSHub 没运行时，自动启动它（最多每 10 分钟试一次）。"],
+    ["rsshub_start_cmd", "text", "RSSHub 启动命令", "留空 = 自动使用本机的 ~/Projects/第三方开源/启动.sh。别的电脑上可填自己的命令，例如 cd ~/RSSHub && pnpm start。"],
+    ["newsnow_url", "text", "热榜接口地址", "newsnow 公开实例，默认 https://newsnow.busiyi.world；可改成自建的 newsnow。"],
   ]],
   ["情感分析", [
     ["pos_threshold", "number", "利好阈值", "得分 ≥ 该值判为利好（-1 ~ 1，默认 0.15）。", null, 0.05],

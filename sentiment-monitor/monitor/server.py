@@ -14,7 +14,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import APP_ID, APP_NAME, __version__, guide, paths, procinfo, sources
+from . import APP_ID, APP_NAME, __version__, catalog, guide, paths, procinfo, rsshub, sources
 from .collector import Collector
 from .db import Store
 from .events import EventBus
@@ -97,6 +97,7 @@ class App:
             return {
                 "app": APP_NAME, "version": __version__, "settings": self.store.settings(),
                 "source_types": sources.catalog(), "kinds": KINDS, "markets": MARKETS,
+                "category_names": rsshub.CATEGORY_NAMES,
                 "data_dir": str(paths.data_dir()), "db": self.store.path,
             }
 
@@ -227,6 +228,77 @@ class App:
                     "items": [{k: it.get(k) for k in ("title", "url", "media", "published_at")} for it in items[:8]],
                     "tested_with": ents[0]["name"] if ents else ""}
 
+        # ---- 订阅目录（v0.3）
+        @r("GET", "/api/rsshub/status")
+        def rsshub_status(req):
+            return rsshub.status()
+
+        @r("POST", "/api/rsshub/start")
+        def rsshub_start(req):
+            return rsshub.start()
+
+        @r("GET", "/api/catalog/categories")
+        def catalog_categories(req):
+            items, err = catalog.all_items(force=req.qs("reload") == "1")
+            return {"categories": catalog.categories(items), "total": len(items), "error": err,
+                    "direct": len(catalog.DIRECT), "rsshub": len(items) - len(catalog.DIRECT)}
+
+        @r("GET", "/api/catalog")
+        def catalog_list(req):
+            items, err = catalog.all_items()
+            total, page = catalog.search(
+                items, cat=req.qs("cat"), q=req.qs("q"), lang=req.qs("lang"), only_ready=req.qs("ready") == "1",
+                direct_only=req.qs("direct") == "1", limit=min(500, req.qi("limit", 200)), offset=req.qi("offset", 0))
+            subscribed = {}
+            for s in self.store.sources():
+                subscribed[s["catalog_key"] or catalog.feed_key(s["type"], s["params"])] = s["id"]
+            tested = catalog.tested()
+            health = self._catalog_health()
+            out = []
+            for it in page:
+                feed = catalog.default_feed(it)
+                fk = catalog.feed_key(feed["type"], feed["params"]) if feed else ""
+                out.append({**it, "feed": feed, "feed_key": fk, "subscribed": subscribed.get(fk) if fk else None,
+                            "tested": tested.get(fk), "health": health.get(fk)})
+            return {"total": total, "items": out, "error": err}
+
+        @r("POST", "/api/catalog/subscribe")
+        def catalog_subscribe(req):
+            """批量订阅：[{type, params, name, category, interval, only_matched, enabled}]，已订阅的跳过。"""
+            have = {s["catalog_key"] or catalog.feed_key(s["type"], s["params"]) for s in self.store.sources()}
+            added = []
+            for it in (req.json().get("items") or [])[:500]:
+                if it.get("type") not in sources.REGISTRY:
+                    continue
+                params = dict(it.get("params") or {})
+                fk = catalog.feed_key(it["type"], params)
+                if fk in have:
+                    continue
+                if it.get("only_matched"):
+                    params["only_matched"] = "1"
+                row = self.store.save_source({
+                    "type": it["type"], "name": it.get("name") or fk, "params": params,
+                    "enabled": it.get("enabled", True), "interval_min": it.get("interval") or 30,
+                    "category": it.get("category") or "", "catalog_key": fk,
+                })
+                have.add(fk)
+                added.append(row["id"])
+            for sid in added:
+                self.collector.run_now(sid)
+            return {"ok": True, "added": len(added)}
+
+        @r("POST", "/api/catalog/health")
+        def catalog_health_save(req):
+            """记录用户在目录里点「测试」的结果，下次打开目录仍能看到。"""
+            body = req.json()
+            fk = body.get("feed_key") or ""
+            if fk:
+                h = self._catalog_health()
+                h[fk] = {"ok": bool(body.get("ok")), "n": int(body.get("count") or 0), "at": int(time.time()),
+                         "error": str(body.get("error") or "")[:200]}
+                self.store.kv_set("catalog_health", json.dumps(h, ensure_ascii=False))
+            return {"ok": True}
+
         @r("POST", "/api/refresh")
         def refresh(req):
             self.collector.run_now()
@@ -303,6 +375,12 @@ class App:
             return {"ok": True}
 
     # ------------------------------------------------------------ 服务
+    def _catalog_health(self) -> dict:
+        try:
+            return json.loads(self.store.kv_get("catalog_health", "{}"))
+        except json.JSONDecodeError:
+            return {}
+
     def make_server(self, port=0):
         app = self
 

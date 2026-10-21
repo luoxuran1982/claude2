@@ -37,7 +37,10 @@ CREATE TABLE IF NOT EXISTS sources (
     last_error TEXT NOT NULL DEFAULT '',
     last_count INTEGER NOT NULL DEFAULT 0,
     last_new INTEGER NOT NULL DEFAULT 0,
-    total INTEGER NOT NULL DEFAULT 0
+    total INTEGER NOT NULL DEFAULT 0,
+    category TEXT NOT NULL DEFAULT '',    -- v0.3：订阅目录的分类（RSSHub 分类 id），用于数据源页分组
+    catalog_key TEXT NOT NULL DEFAULT '', -- v0.3：从订阅目录添加时的订阅地址，用于判断「已订阅」
+    fail_count INTEGER NOT NULL DEFAULT 0 -- v0.3：连续失败次数，用于失败退避
 );
 CREATE TABLE IF NOT EXISTS articles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +102,11 @@ DEFAULT_SETTINGS = {
     "notify_desktop": True,
     "notify_sound": False,
     "quote_refresh_sec": 30,
+    "rsshub_url": "http://127.0.0.1:1200",   # v0.3：本机 RSSHub 地址
+    "rsshub_autostart": True,                # v0.3：有启用的 RSSHub 源而 RSSHub 没运行时，自动启动它
+    "rsshub_start_cmd": "",                  # v0.3：自定义启动命令；空 = 自动找本机启动脚本
+    "newsnow_url": "https://newsnow.busiyi.world",  # v0.3：热榜接口地址（可改成自建 newsnow）
+    "max_parallel": 6,                       # v0.3：同时抓取的数据源个数
 }
 
 DEFAULT_SOURCES = [
@@ -110,8 +118,8 @@ DEFAULT_SOURCES = [
     ("bing_news", "必应新闻 RSS（按监控对象）", {"mkt": "zh-CN"}, 1, 30),
     ("google_news", "Google 新闻 RSS（按监控对象，需能访问 Google）", {"hl": "zh-CN", "gl": "CN"}, 0, 30),
     ("yahoo_finance", "Yahoo Finance RSS（美股代码）", {}, 1, 30),
-    ("rss", "36氪", {"url": "https://36kr.com/feed"}, 1, 30),
-    ("rss", "RSSHub 示例·雪球个股讨论（建议自建 RSSHub）", {"url": "https://rsshub.app/xueqiu/stock_comments/SH600519"}, 0, 60),
+    ("rsshub", "36氪·快讯", {"path": "/36kr/newsflashes"}, 1, 10),
+    ("newsnow", "雪球·热股榜", {"id": "xueqiu-hotstock"}, 1, 10),
 ]
 
 DEFAULT_ENTITIES = [
@@ -150,8 +158,24 @@ class Store:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=NORMAL")
             self.conn.executescript(SCHEMA)
+            self._migrate()
             self.conn.commit()
         self._seed()
+
+    def _migrate(self):
+        """旧版数据库补列（v0.2 → v0.3）。只加列，不动已有数据。"""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(sources)")}
+        for col, ddl in (
+            ("category", "TEXT NOT NULL DEFAULT ''"),
+            ("catalog_key", "TEXT NOT NULL DEFAULT ''"),
+            ("fail_count", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE sources ADD COLUMN {col} {ddl}")
+        # v0.2 的默认数据源归类，好在数据源页分组显示
+        self.conn.execute("UPDATE sources SET category='finance' WHERE category='' AND type IN "
+                          "('sina_roll','eastmoney_724','cls_telegraph','eastmoney_search','yahoo_finance')")
+        self.conn.execute("UPDATE sources SET category='traditional-media' WHERE category='' AND type IN ('bing_news','google_news')")
 
     def close(self):
         with self.lock:
@@ -174,6 +198,7 @@ class Store:
 
     def _seed(self):
         if self.kv_get("seeded"):
+            self._fix_v02_defaults()
             return
         now = int(time.time())
         with self.lock:
@@ -189,6 +214,20 @@ class Store:
                 )
             self.conn.commit()
         self.kv_set("seeded", "1")
+        self.kv_set("migrated_v03", "1")
+        self._x("UPDATE sources SET category='finance' WHERE category='' AND type='newsnow'")
+        self._x("UPDATE sources SET category='new-media' WHERE category='' AND type='rsshub'")
+
+    def _fix_v02_defaults(self):
+        """v0.2 的两个默认订阅已失效：36氪官方 feed 返回 0 条、rsshub.app 公共实例常被限流。只改一次。"""
+        if self.kv_get("migrated_v03"):
+            return
+        self._x("UPDATE sources SET type='rsshub', name='36氪·快讯', params=?, category='new-media' "
+                "WHERE type='rss' AND params LIKE '%36kr.com/feed%'", (json.dumps({"path": "/36kr/newsflashes"}),))
+        self._x("UPDATE sources SET type='rsshub', params=?, category='finance' "
+                "WHERE type='rss' AND params LIKE '%rsshub.app/xueqiu/stock_comments/SH600519%'",
+                (json.dumps({"path": "/xueqiu/stock_comments/SH600519"}),))
+        self.kv_set("migrated_v03", "1")
 
     # ------------------------------------------------------------ 设置
     def kv_get(self, key, default=None):
@@ -283,12 +322,15 @@ class Store:
         params = s.get("params") or {}
         if isinstance(params, str):
             params = json.loads(params or "{}")
-        vals = (s["type"], name, json.dumps(params, ensure_ascii=False), 1 if s.get("enabled", True) else 0, max(1.0, float(s.get("interval_min") or 10)))
+        vals = (s["type"], name, json.dumps(params, ensure_ascii=False), 1 if s.get("enabled", True) else 0,
+                max(1.0, float(s.get("interval_min") or 10)), s.get("category") or "", s.get("catalog_key") or "")
         if s.get("id"):
-            self._x("UPDATE sources SET type=?,name=?,params=?,enabled=?,interval_min=? WHERE id=?", vals + (int(s["id"]),))
+            self._x("UPDATE sources SET type=?,name=?,params=?,enabled=?,interval_min=?,category=?,catalog_key=? WHERE id=?",
+                    vals + (int(s["id"]),))
             sid = int(s["id"])
         else:
-            sid = self._x("INSERT INTO sources(type,name,params,enabled,interval_min) VALUES(?,?,?,?,?)", vals).lastrowid
+            sid = self._x("INSERT INTO sources(type,name,params,enabled,interval_min,category,catalog_key) VALUES(?,?,?,?,?,?,?)",
+                          vals).lastrowid
         return self.source(sid)
 
     def delete_source(self, sid: int):
@@ -298,11 +340,12 @@ class Store:
         now = int(time.time())
         if ok:
             self._x(
-                "UPDATE sources SET last_run=?,last_ok=?,last_error='',last_count=?,last_new=?,total=total+? WHERE id=?",
+                "UPDATE sources SET last_run=?,last_ok=?,last_error='',last_count=?,last_new=?,total=total+?,fail_count=0 WHERE id=?",
                 (now, now, count, new, new, sid),
             )
         else:
-            self._x("UPDATE sources SET last_run=?,last_error=?,last_count=0,last_new=0 WHERE id=?", (now, error[:500], sid))
+            self._x("UPDATE sources SET last_run=?,last_error=?,last_count=0,last_new=0,fail_count=fail_count+1 WHERE id=?",
+                    (now, error[:500], sid))
 
     # ------------------------------------------------------------ 资讯
     def add_article(self, a: dict) -> int | None:

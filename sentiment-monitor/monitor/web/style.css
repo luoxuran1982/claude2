@@ -277,3 +277,32 @@ table.md-yaml th { background: var(--surface-2); font-weight: 500; }
   .guide { grid-template-columns: 1fr; }
   .guide-toc { position: static; max-height: none; }
 }
+
+/* ---- v0.3 数据源分组、订阅目录 ---- */
+.src-group { padding: 10px 14px; margin-bottom: 10px; }
+.src-group-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; user-select: none; }
+.src-group-head .fold { width: 14px; color: var(--muted); }
+.src-group .table-wrap { margin-top: 8px; }
+.src-param { font-size: 12px; word-break: break-all; }
+.hub-status { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.catalog { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 14px; align-items: start; }
+.cat-side { padding: 8px; position: sticky; top: 8px; max-height: calc(100vh - 140px); overflow: auto; }
+.cat-side a { display: flex; justify-content: space-between; gap: 6px; padding: 6px 10px; border-radius: 8px; color: var(--text); text-decoration: none; }
+.cat-side a span { color: var(--muted); font-size: 12px; }
+.cat-side a:hover { background: var(--surface-2); }
+.cat-side a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.cat-sum { padding: 6px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px; font-size: 13px; }
+.cat-bar { margin-bottom: 8px; }
+.cat-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.cat-item:last-child { border-bottom: 0; }
+.cat-item > input { margin-top: 4px; }
+.cat-body { flex: 1; min-width: 0; }
+.cat-body .tag { margin-left: 2px; }
+.cat-desc { font-size: 12px; margin-top: 2px; }
+.cat-act { white-space: nowrap; }
+.cat-test .preview { margin-top: 6px; }
+@media (max-width: 760px) {
+  .catalog { grid-template-columns: 1fr; }
+  .cat-side { position: static; max-height: 220px; }
+  .cat-item { flex-wrap: wrap; }
+}

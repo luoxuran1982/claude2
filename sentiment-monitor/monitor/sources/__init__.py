@@ -1,6 +1,7 @@
 """数据源注册表。新增数据源：写一个 Source 子类，加到 REGISTRY 即可。"""
 
 from .base import Source
+from .hub import CninfoSource, HkexNewsSource, NewsnowSource, RsshubSource
 from .cn_finance import ClsTelegraphSource, EastmoneyFastSource, EastmoneySearchSource, SinaRollSource
 from .rss import BingNewsSource, GoogleNewsSource, RssSource, YahooFinanceSource
 
@@ -15,6 +16,10 @@ REGISTRY: dict[str, Source] = {
         GoogleNewsSource,
         YahooFinanceSource,
         RssSource,
+        RsshubSource,
+        NewsnowSource,
+        CninfoSource,
+        HkexNewsSource,
     )
 }
 

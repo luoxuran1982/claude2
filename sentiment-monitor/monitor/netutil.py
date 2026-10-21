@@ -17,18 +17,23 @@ DEFAULT_UA = (
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 )
 
-# 由设置页修改：{"proxy": "http://127.0.0.1:7890", "timeout": 15}
-options = {"proxy": "", "timeout": 15}
+# 由设置页修改：{"proxy": "http://127.0.0.1:7890", "timeout": 15, ...}
+options = {"proxy": "", "timeout": 15, "rsshub_url": "http://127.0.0.1:1200", "newsnow_url": "https://newsnow.busiyi.world"}
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class FetchError(Exception):
     pass
 
 
-def _opener():
+def _opener(url: str = ""):
     handlers = [urllib.request.HTTPSHandler(context=ssl.create_default_context())]
     proxy = (options.get("proxy") or "").strip()
-    if proxy:
+    if urllib.parse.urlparse(url).hostname in LOCAL_HOSTS:
+        # 本机服务（如 RSSHub）不走代理，也不走系统代理
+        handlers.append(urllib.request.ProxyHandler({}))
+    elif proxy:
         handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
     # 未设置时 urllib 会自动使用系统代理（Windows 注册表 / 环境变量）
     return urllib.request.build_opener(*handlers)
@@ -51,12 +56,13 @@ def _decode(raw: bytes, content_type: str) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def fetch(url: str, headers: dict | None = None, timeout: float | None = None) -> str:
+def fetch(url: str, headers: dict | None = None, timeout: float | None = None, data: bytes | None = None) -> str:
+    """GET（或给了 data 时 POST）一个网址，返回解码后的文本。失败统一抛 FetchError。"""
     h = {"User-Agent": DEFAULT_UA, "Accept": "*/*", "Accept-Encoding": "gzip, deflate", "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
     h.update(headers or {})
-    req = urllib.request.Request(url, headers=h)
+    req = urllib.request.Request(url, headers=h, data=data)
     try:
-        with _opener().open(req, timeout=timeout or options.get("timeout") or 15) as resp:
+        with _opener(url).open(req, timeout=timeout or options.get("timeout") or 15) as resp:
             raw = resp.read(8 * 1024 * 1024)
             enc = (resp.headers.get("Content-Encoding") or "").lower()
             ctype = resp.headers.get("Content-Type") or ""

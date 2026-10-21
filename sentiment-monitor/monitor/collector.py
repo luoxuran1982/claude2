@@ -7,7 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import netutil, sentiment, sources
+from . import netutil, rsshub, sentiment, sources
 from .matcher import Matcher
 
 log = logging.getLogger("monitor.collector")
@@ -21,7 +21,9 @@ class Collector:
         self.wake = threading.Event()
         self.running: set[int] = set()
         self.lock = threading.Lock()
-        self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="fetch")
+        # 定时调度同时最多提交 max_parallel 个（设置里调）；「全部立即抓取」时排队，最多 12 个线程同时跑
+        self.pool = ThreadPoolExecutor(max_workers=12, thread_name_prefix="fetch")
+        self.last_rsshub_start = 0
         self.thread = None
         self.last_cleanup = 0
         self.paused = False
@@ -39,8 +41,8 @@ class Collector:
 
     def apply_settings(self):
         cfg = self.store.settings()
-        netutil.options["proxy"] = cfg["proxy"]
-        netutil.options["timeout"] = cfg["timeout"]
+        for k in ("proxy", "timeout", "rsshub_url", "rsshub_start_cmd", "newsnow_url"):
+            netutil.options[k] = cfg[k]
 
     def run_now(self, source_id=None):
         """立即抓取：指定数据源，或全部启用的数据源。"""
@@ -57,9 +59,13 @@ class Collector:
             try:
                 if not self.paused:
                     now = time.time()
-                    for s in self.store.sources():
-                        if s["enabled"] and now - s["last_run"] >= s["interval_min"] * 60:
-                            self._submit(s["id"])
+                    cfg = self.store.settings()
+                    due = [s for s in self.store.sources() if s["enabled"] and _due(s, now)]
+                    due.sort(key=lambda s: s["last_run"])  # 等得最久的先抓
+                    room = max(1, int(cfg["max_parallel"])) - len(self.running)
+                    for s in due[:max(0, room)]:
+                        self._submit(s["id"])
+                    self._maybe_start_rsshub(cfg, due)
                     if now - self.last_cleanup > 3600:
                         self.last_cleanup = now
                         n = self.store.cleanup(self.store.settings()["retention_days"])
@@ -69,6 +75,17 @@ class Collector:
                 log.exception("调度出错")
             self.wake.wait(10)
             self.wake.clear()
+
+    def _maybe_start_rsshub(self, cfg, due):
+        """有到期的 RSSHub 源、RSSHub 却没运行时，按设置自动启动它（最多每 10 分钟试一次）。"""
+        if not cfg["rsshub_autostart"] or not any(s["type"] == "rsshub" for s in due):
+            return
+        if time.time() - self.last_rsshub_start < 600:
+            return
+        self.last_rsshub_start = time.time()
+        if not rsshub.status()["ok"] and rsshub.start_command():
+            log.info("RSSHub 没有运行，自动启动")
+            rsshub.start()
 
     def _submit(self, sid):
         with self.lock:
@@ -132,6 +149,8 @@ class Collector:
         entities = self.store.entities(enabled_only=True)
         matcher = Matcher(entities)
         names = {e["id"]: e["name"] for e in entities}
+        # v0.3：量大的源（全市场公告、热榜、综合新闻）可设为只保存命中监控对象的条目
+        only_matched = str((source.get("params") or {}).get("only_matched", "")) in ("1", "true", "True")
         now = int(time.time())
         new = []
         for it in items:
@@ -141,7 +160,7 @@ class Collector:
             text = f"{title}\n{it.get('summary') or ''}"
             eids = list(dict.fromkeys((it.get("entity_ids") or []) + matcher.match(text)))
             eids = [e for e in eids if e in names]
-            if not eids and not cfg["store_unmatched"]:
+            if not eids and (not cfg["store_unmatched"] or only_matched):
                 continue
             res = sentiment.analyze(title, it.get("summary") or "", cfg["pos_threshold"], cfg["neg_threshold"])
             art = {
@@ -188,6 +207,12 @@ class Collector:
         alert_id = self.store.add_alert(eid, aid, kind, level, msg)
         if alert_id:
             self.bus.publish("alert", self.store.alert(alert_id))
+
+
+def _due(s, now) -> bool:
+    """到没到抓取时间。连续失败的源退避：间隔 × 2^失败次数，最多 × 8，避免反复请求打不开的网站。"""
+    backoff = min(8, 2 ** min(3, s.get("fail_count") or 0))
+    return now - s["last_run"] >= s["interval_min"] * 60 * backoff
 
 
 def _summarize(errors: list[str], n_entities: int) -> str:
