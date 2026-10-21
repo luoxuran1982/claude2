@@ -7,7 +7,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LABEL = { pos: "利好", neg: "利空", neu: "中性" };
 const ARROW = { pos: "▲", neg: "▼", neu: "●" };
-const TITLES = { overview: "总览", feed: "资讯流", entities: "监控对象", sources: "数据源", catalog: "订阅目录", alerts: "预警中心", status: "运行状态", guide: "使用指南", settings: "设置" };
+const TITLES = { overview: "总览", feed: "资讯流", entities: "监控对象", sources: "数据源", catalog: "订阅目录", rsshub: "RSSHub 原版", alerts: "预警中心", status: "运行状态", guide: "使用指南", settings: "设置" };
 const TZ = -new Date().getTimezoneOffset();
 
 const state = {
@@ -899,6 +899,43 @@ function catalogParamForm(it) {
     } catch (e) { errToast(e); }
   };
 }
+
+// ------------------------------------------------------------------ 页面：RSSHub 原版（v0.3）
+// 嵌入本机 RSSHub 自己的页面，方便对照学习它原本的用法。官方文档站禁止被嵌入，只能在浏览器里打开。
+PAGES.rsshub = async () => {
+  const base = (state.settings.rsshub_url || state.boot.settings.rsshub_url || "http://127.0.0.1:1200").replace(/\/+$/, "");
+  $("#view").innerHTML = `
+    <div class="toolbar">
+      <span id="hubStatus" class="hub-status"><span class="status-dot run"></span>检查 RSSHub…</span>
+      <span class="spacer"></span>
+      <a class="btn" href="https://docs.rsshub.app/zh/" target="_blank" rel="noopener">打开官方中文文档（浏览器）</a>
+      <a class="btn" href="${esc(base)}" target="_blank" rel="noopener">在浏览器打开本机 RSSHub</a>
+      <a class="btn" href="#/guide?doc=${encodeURIComponent("docs/09 RSSHub 原版用法说明.md")}">原版用法说明</a>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="sub">RSSHub 原本的用法：在文档站找到路由 → 拼成地址 → 浏览器打开看原始 RSS（XML）→ 复制地址放进 RSS 阅读器。下面可以直接体验第 2、3 步。</div>
+      <div class="toolbar" style="margin:0">
+        <input type="text" id="rhPath" class="grow" placeholder="路由，例如 /cls/telegraph、/wallstreetcn/live、/zhihu/hot" value="/cls/telegraph">
+        <button class="btn primary" id="rhGo">预览原始 RSS</button>
+        <button class="btn" id="rhHome">回到 RSSHub 首页</button>
+        <button class="btn" id="rhSub">订阅到舆情监控</button>
+      </div>
+      <div class="muted" id="rhUrl" style="font-size:12px;margin-top:6px"></div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden"><iframe id="rhFrame" class="rh-frame" src="${esc(base)}/" title="RSSHub 原生页面"></iframe></div>`;
+  hubStatus();
+  const show = (u) => { $("#rhFrame").src = u; $("#rhUrl").textContent = "当前地址：" + u; };
+  const path = () => "/" + $("#rhPath").value.trim().replace(/^\/+/, "");
+  $("#rhGo").onclick = () => show(base + path());
+  $("#rhPath").onkeydown = (ev) => { if (ev.key === "Enter") show(base + path()); };
+  $("#rhHome").onclick = () => show(base + "/");
+  $("#rhSub").onclick = async () => {
+    const p = path();
+    const r = await POST("/api/catalog/subscribe", { items: [{ type: "rsshub", params: { path: p }, name: "RSSHub" + p, interval: 30, only_matched: true }] }).catch(errToast);
+    if (r) toast(r.added ? `已订阅 ${esc(p)}（默认只存命中，可在「数据源」里改）` : "这个地址已经订阅过了");
+  };
+  $("#rhUrl").textContent = "当前地址：" + base + "/";
+};
 
 // ------------------------------------------------------------------ 页面：预警
 PAGES.alerts = async (q) => {

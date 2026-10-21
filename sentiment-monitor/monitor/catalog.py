@@ -137,6 +137,9 @@ DIRECT = [
 ]
 
 
+DIRECT_ORDER = {it["key"]: i for i, it in enumerate(DIRECT)}
+
+
 def tested() -> dict:
     """随应用附带的实测记录：{订阅地址: {"n": 条数, "at": "日期"}}。"""
     try:
@@ -204,7 +207,8 @@ def search(items, cat="", q="", lang="", only_ready=False, direct_only=False, li
         feed = default_feed(it)
         ok = feed and feed_key(feed["type"], feed["params"]) in tst
         zh = str(it.get("lang", "")).startswith("zh")
-        return (0 if zh else 1, 0 if it.get("direct") else 1 if ok else 2, it["site"], it["name"])
+        # 直连条目保持 DIRECT 里的顺序（交易所、监管在前）
+        return (0 if zh else 1, 0 if it.get("direct") else 1 if ok else 2, DIRECT_ORDER.get(it["key"], 0), it["site"], it["name"])
 
     out.sort(key=rank)
     return len(out), out[offset:offset + limit]
