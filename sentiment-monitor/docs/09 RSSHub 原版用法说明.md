@@ -1,8 +1,8 @@
 ---
 author: Claude
 created: 2026-10-21
-updated: 2026-10-21
-version: 0.3.0
+updated: 2026-10-22
+version: 0.3.1
 tags: [Claude, 舆情监控, RSSHub, 使用指南]
 ---
 
@@ -72,7 +72,16 @@ tags: [Claude, 舆情监控, RSSHub, 使用指南]
 | 404 | 路由不存在 | 路径或参数写错，或本机 RSSHub 版本太旧（`cd ~/Projects/第三方开源/RSSHub && git pull` 后重启） |
 | 能打开但 0 条 | 网站暂时没有新内容，或网站改版 | 隔一段时间再试；长期为 0 可到 RSSHub 的 GitHub 提 issue |
 
-## 5. 许可证与合规
+## 5. 本机 RSSHub 要定期更新
+
+本机 RSSHub 是 2026-10-18 下载的一份快照，**不会自己更新**；到 10-22 已经落后社区 48 个更新。网站改版导致某个路由坏了，社区修好后，你本机要更新才用得上。
+
+- 应用里：「订阅目录」或「RSSHub 原版」页顶部「检查 RSSHub 更新」→「更新 RSSHub」。
+- 手动：终端里依次运行 `cd ~/Projects/第三方开源/RSSHub`、`git pull`、`pnpm install`、`pnpm build`，再重启 RSSHub。
+
+原理：RSSHub 平时运行的是 `dist/` 里**编译好的**程序（`pnpm start` = `node dist/index.mjs`），所以光拉新代码不够，要重新编译、重启才会生效。
+
+## 6. 许可证与合规
 
 - RSSHub 是开源软件，许可证 **AGPL-3.0**。本机自用没有任何义务；只有修改它的代码后再分发、或架成网站给别人用时，才需要公开修改后的源码。
 - 舆情监控**只通过 HTTP 调用**本机 RSSHub，没有复制它的代码，所以两者是独立程序，舆情监控不受 AGPL 约束。RSSHub 也不随舆情监控一起打包。

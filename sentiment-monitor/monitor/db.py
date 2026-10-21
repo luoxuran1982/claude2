@@ -121,6 +121,8 @@ DEFAULT_SOURCES = [
     ("yahoo_finance", "Yahoo Finance RSS（美股代码）", {}, 1, 30),
     ("rsshub", "36氪·快讯", {"path": "/36kr/newsflashes"}, 1, 10),
     ("newsnow", "雪球·热股榜", {"id": "xueqiu-hotstock"}, 1, 10),
+    ("cninfo_stock", "巨潮资讯·按监控对象查公告（A 股、港股）", {"size": "20"}, 1, 30),
+    ("sec_filings", "SEC EDGAR·按监控对象查申报（需填 SEC 联系邮箱）", {}, 0, 60),
 ]
 
 DEFAULT_ENTITIES = [
@@ -216,7 +218,7 @@ class Store:
             self.conn.commit()
         self.kv_set("seeded", "1")
         self.kv_set("migrated_v03", "1")
-        self._x("UPDATE sources SET category='finance' WHERE category='' AND type='newsnow'")
+        self._x("UPDATE sources SET category='finance' WHERE category='' AND type IN ('newsnow','cninfo_stock','sec_filings')")
         self._x("UPDATE sources SET category='new-media' WHERE category='' AND type='rsshub'")
 
     def _fix_v02_defaults(self):

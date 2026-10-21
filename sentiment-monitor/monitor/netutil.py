@@ -65,7 +65,8 @@ def _sec_headers(url: str) -> dict:
     if not (host == "sec.gov" or host.endswith(".sec.gov")):
         return {}
     contact = (options.get("sec_contact") or "").strip()
-    if not contact and "/cgi-bin/" in url:
+    # EDGAR 查询（/cgi-bin/）、data.sec.gov 接口、/files/ 下的数据文件都检查 UA；新闻稿 RSS 不检查
+    if not contact and ("/cgi-bin/" in url or host == "data.sec.gov" or "/files/" in url):
         raise FetchError("SEC EDGAR 要求请求里带联系邮箱：请到「设置 → SEC 联系邮箱」填写")
     return {"User-Agent": f"SentimentMonitor/1.0 {contact}".strip()} if contact else {}
 

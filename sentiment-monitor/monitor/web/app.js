@@ -744,6 +744,37 @@ async function hubStatus() {
     setTimeout(async () => { await hubStatus(); await loadCategories(true); loadCatalog(true); }, 20000);
   };
   if (!s.ok && s.starting) setTimeout(hubStatus, 5000);
+  hubUpdateUI();
+}
+// v0.3.1：检查 / 更新本机 RSSHub。本机 RSSHub 是快照，不会自己更新；社区修好的路由要更新后才用得上。
+async function hubUpdateUI() {
+  const el = $("#hubStatus");
+  if (!el) return;
+  const u = await GET("/api/rsshub/update").catch(() => null);
+  if (!u || !u.available) return;
+  let box = $("#hubUpd");
+  if (!box) { box = document.createElement("span"); box.id = "hubUpd"; box.className = "hub-status"; el.after(box); }
+  if (u.running) {
+    box.innerHTML = `<span class="status-dot run"></span>正在更新 RSSHub：${esc(u.step)} <span class="muted">（关掉窗口会中断）</span>`;
+    setTimeout(hubUpdateUI, 3000);
+    return;
+  }
+  const last = u.finished_at ? (u.ok ? `<span class="up">上次更新成功 ${esc(u.before)}→${esc(u.after)}</span>` : `<span class="down" title="${esc(u.error)}">上次更新失败</span>`) : "";
+  box.innerHTML = `${last} <button class="btn small" id="hubCheck">检查 RSSHub 更新</button>`;
+  $("#hubCheck").onclick = async () => {
+    const b = $("#hubCheck");
+    b.disabled = true; b.textContent = "检查中…";
+    const r = await POST("/api/rsshub/check").catch((e) => ({ ok: false, error: e.message }));
+    if (!r.ok) { toast(esc(r.error), "error"); b.disabled = false; b.textContent = "检查 RSSHub 更新"; return; }
+    if (!r.behind) { box.innerHTML = `<span class="up">RSSHub 已是最新</span> <span class="muted">（本机版本 ${esc(r.local_date)}）</span>`; return; }
+    box.innerHTML = `本机 RSSHub（${esc(r.local_date)}）落后社区 <b>${r.behind}</b> 个更新 <button class="btn small primary" id="hubUpdate">更新 RSSHub</button>`;
+    $("#hubUpdate").onclick = async () => {
+      if (!confirm(`更新本机 RSSHub：拉取 ${r.behind} 个社区更新 → 安装依赖 → 重新编译 → 重启。\n\n大约需要 3–10 分钟，期间 RSSHub 类的源会暂时抓不到；编译失败会自动还原旧版。\n\n开始吗？`)) return;
+      const x = await POST("/api/rsshub/update").catch(errToast);
+      if (x && !x.ok) toast(esc(x.error), "error");
+      hubUpdateUI();
+    };
+  };
 }
 async function loadCategories(reload) {
   const d = await GET("/api/catalog/categories" + (reload ? "?reload=1" : ""));

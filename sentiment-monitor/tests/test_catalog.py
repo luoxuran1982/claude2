@@ -91,6 +91,77 @@ class NewSourcesTest(unittest.TestCase):
             netutil.options["proxy"] = ""
 
 
+class PerEntitySourcesTest(unittest.TestCase):
+    """v0.3.1：按监控对象查公告。"""
+    ENTS = [{"id": 1, "name": "贵州茅台", "code": "600519", "market": "A"},
+            {"id": 2, "name": "腾讯控股", "code": "700", "market": "HK"},
+            {"id": 3, "name": "英伟达", "code": "NVDA", "market": "US"},
+            {"id": 4, "name": "人工智能", "code": "", "market": ""}]
+
+    def setUp(self):
+        from monitor.sources import hub
+        self.hub = hub
+        hub._cninfo_orgs.value, hub._cninfo_orgs.at = {("A", "600519"): "gssh0600519", ("HK", "00700"): "gshk0000700"}, time.time()
+        hub._sec_ciks.value, hub._sec_ciks.at = {"NVDA": 1045810}, time.time()
+
+    def test_cninfo_stock_by_code(self):
+        resp = json.dumps({"announcements": [{"secName": "贵州茅台", "announcementTitle": "2026年半年度报告",
+                                              "adjunctUrl": "a.pdf", "announcementTime": 1792598400000}]})
+        with mock.patch.object(netutil, "fetch", return_value=resp) as f:
+            items = sources.get("cninfo_stock").fetch({}, self.ENTS)
+        forms = [c.kwargs["data"].decode() for c in f.call_args_list]
+        self.assertEqual(len(forms), 2)  # 只查 A 股和港股，美股和主题词跳过
+        self.assertIn("stock=600519%2Cgssh0600519", forms[0])
+        self.assertIn("column=hke", forms[1])  # 港股代码补成 5 位 00700
+        self.assertEqual(items[0]["entity_ids"], [1])
+        self.assertEqual(items[0]["title"], "贵州茅台：2026年半年度报告")
+
+    def test_sec_filings_default_forms(self):
+        today = time.strftime("%Y-%m-%d")
+        sub = {"name": "NVIDIA CORP", "filings": {"recent": {
+            "form": ["4", "8-K", "10-Q/A", "10-Q"], "filingDate": [today, today, today, "2000-01-01"],
+            "acceptanceDateTime": [f"{today}T01:00:00.000Z"] * 4, "accessionNumber": ["0001-26-1", "0001-26-2", "0001-26-3", "0001-00-4"],
+            "primaryDocument": ["f4.xml", "8k.htm", "q.htm", "old.htm"], "primaryDocDescription": ["FORM 4", "8-K", "", ""]}}}
+        netutil.options["sec_contact"] = "test@example.com"
+        try:
+            with mock.patch.object(netutil, "fetch_json", return_value=sub) as f:
+                items = sources.get("sec_filings").fetch({}, self.ENTS)
+        finally:
+            netutil.options["sec_contact"] = ""
+        self.assertEqual(f.call_count, 1)  # 只查美股
+        titles = [i["title"] for i in items]
+        self.assertEqual(titles, ["英伟达：8-K（重大事项）", "英伟达：10-Q/A（季报）"])  # 默认不含 Form 4；太旧的截断
+        self.assertEqual(items[0]["url"], "https://www.sec.gov/Archives/edgar/data/1045810/0001262/8k.htm")
+        self.assertIn("修订版", items[1]["summary"])
+
+    def test_sec_requires_contact(self):
+        with self.assertRaises(netutil.FetchError):
+            netutil._sec_headers("https://data.sec.gov/submissions/CIK0001045810.json")
+        self.assertEqual(netutil._sec_headers("https://www.sec.gov/news/pressreleases.rss"), {})
+
+
+class RsshubUpdateTest(unittest.TestCase):
+    def test_refuses_when_dirty(self):
+        """本机 RSSHub 有未提交修改时不自动更新，避免覆盖。"""
+        calls = []
+
+        def fake_run(args, cwd, timeout=900):
+            calls.append(args)
+            if args[:2] == ["git", "rev-parse"]:
+                return "abc123\n"
+            if args[:2] == ["git", "status"]:
+                return " M lib/routes/x.ts\n"
+            raise AssertionError("不应继续执行：" + " ".join(args))
+
+        with mock.patch.object(rsshub, "_run", side_effect=fake_run):
+            rsshub._update["running"] = True
+            rsshub._do_update(Path("/tmp/none"))
+        st = rsshub.update_status()
+        self.assertFalse(st["ok"])
+        self.assertIn("未提交的修改", st["error"])
+        self.assertFalse(any(a[:2] == ["git", "pull"] for a in calls))
+
+
 class CatalogTest(unittest.TestCase):
     def setUp(self):
         rsshub._cache.update(at=0, routes=None, error="")

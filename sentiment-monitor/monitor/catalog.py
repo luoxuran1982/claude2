@@ -37,6 +37,11 @@ EDGAR = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={}&coun
 
 # 本应用直连的源（2026-10-21 在用户 Mac 上实测能抓到）
 DIRECT = [
+    # ---- v0.3.1：按监控对象查公告（只查你监控的股票，不用订阅全市场）
+    _d("finance", "巨潮资讯", "按监控对象查公告（A 股、港股）", "cninfo_stock", {"size": "20"}, 30,
+       note="对每个 A 股、港股监控对象，按代码查它自己最近 20 条公告。比订阅全市场公告精准。"),
+    _d("finance", "SEC EDGAR", "按监控对象查申报（美股、中概股）", "sec_filings", {}, 60, lang="en",
+       note="对每个美股监控对象，用 SEC 官方接口查最近 90 天的 8-K、10-Q、6-K 等申报。需先填「设置 → SEC 联系邮箱」。"),
     # ---- 交易所 / 信息披露
     _d("finance", "巨潮资讯", "A 股全市场最新公告", "cninfo", {"plate": ""}, 10, True, note="证监会指定信息披露网站。全市场公告量大，默认只保存命中监控对象的公告。"),
     _d("finance", "巨潮资讯", "深市最新公告", "cninfo", {"plate": "sz"}, 10, True),

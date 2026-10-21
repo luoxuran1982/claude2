@@ -217,7 +217,8 @@ class App:
                 src = sources.get(body.get("type", ""))
             except KeyError as e:
                 raise ApiError(400, str(e)) from e
-            ents = self.store.entities(enabled_only=True)[:1] if src.per_entity else []
+            # 按监控对象的源用前 5 个对象测：有的源只管某个市场（如 SEC 只查美股），只拿第 1 个可能测出 0 条
+            ents = self.store.entities(enabled_only=True)[:5] if src.per_entity else []
             if src.per_entity and not ents:
                 raise ApiError(400, "这个数据源按监控对象搜索，请先添加一个监控对象")
             t0 = time.time()
@@ -227,7 +228,7 @@ class App:
                 return {"ok": False, "error": str(e) or type(e).__name__, "ms": int((time.time() - t0) * 1000)}
             return {"ok": True, "count": len(items), "ms": int((time.time() - t0) * 1000),
                     "items": [{k: it.get(k) for k in ("title", "url", "media", "published_at")} for it in items[:8]],
-                    "tested_with": ents[0]["name"] if ents else ""}
+                    "tested_with": "、".join(e["name"] for e in ents)}
 
         # ---- 订阅目录（v0.3）
         @r("GET", "/api/rsshub/status")
@@ -237,6 +238,18 @@ class App:
         @r("POST", "/api/rsshub/start")
         def rsshub_start(req):
             return rsshub.start()
+
+        @r("GET", "/api/rsshub/update")
+        def rsshub_update_status(req):
+            return rsshub.update_status()
+
+        @r("POST", "/api/rsshub/check")
+        def rsshub_check(req):
+            return rsshub.check_behind()
+
+        @r("POST", "/api/rsshub/update")
+        def rsshub_update(req):
+            return rsshub.start_update()
 
         @r("GET", "/api/catalog/categories")
         def catalog_categories(req):
