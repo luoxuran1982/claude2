@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 from . import rsshub
@@ -141,7 +140,7 @@ DIRECT_ORDER = {it["key"]: i for i, it in enumerate(DIRECT)}
 
 
 def tested() -> dict:
-    """随应用附带的实测记录：{订阅地址: {"n": 条数, "at": "日期"}}。"""
+    """随应用附带的实测记录：{订阅地址: {"n": 条数, "latest": 最新一条的日期, "at": 测试日期}}。"""
     try:
         return json.loads(TESTED_FILE.read_text("utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -216,7 +215,3 @@ def search(items, cat="", q="", lang="", only_ready=False, direct_only=False, on
 
     out.sort(key=rank)
     return len(out), out[offset:offset + limit]
-
-
-def stamp() -> str:
-    return time.strftime("%Y-%m-%d")

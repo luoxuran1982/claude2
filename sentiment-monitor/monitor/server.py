@@ -49,6 +49,7 @@ class App:
         self.browser = None       # lifecycle.BrowserWindow（run.py 设置）
         self.browser_mode = ""   # edge/chrome/default/none
         self._stopping = threading.Event()
+        self._health_lock = threading.Lock()
         self._register()
 
     # ------------------------------------------------------------ 关闭
@@ -293,10 +294,12 @@ class App:
             body = req.json()
             fk = body.get("feed_key") or ""
             if fk:
-                h = self._catalog_health()
-                h[fk] = {"ok": bool(body.get("ok")), "n": int(body.get("count") or 0), "at": int(time.time()),
-                         "error": str(body.get("error") or "")[:200]}
-                self.store.kv_set("catalog_health", json.dumps(h, ensure_ascii=False))
+                # 「测试本页」会并发发来多个请求：读-改-写要加锁，否则后写的会覆盖先写的
+                with self._health_lock:
+                    h = self._catalog_health()
+                    h[fk] = {"ok": bool(body.get("ok")), "n": int(body.get("count") or 0), "at": int(time.time()),
+                             "error": str(body.get("error") or "")[:200]}
+                    self.store.kv_set("catalog_health", json.dumps(h, ensure_ascii=False))
             return {"ok": True}
 
         @r("POST", "/api/refresh")
